@@ -1,0 +1,39 @@
+# 
+#
+
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfspeak"
+version = "0.0.1"
+requires-python = ">=3.12.0"
+
+dependencies = [
+    "spacy",
+    "transformers",
+    "num2words",
+    "phonemizer",
+    "huggingface_hub",
+    "misaki",
+    "platformdirs",
+    "pydantic",
+    "torch",
+    "sounddevice",
+]
+
+[project.scripts]
+pfspeak = "pfspeak.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+pfspeak = ["resources/*.sh", "resources/pflogger"]
+
+

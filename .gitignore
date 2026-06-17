@@ -1,0 +1,5 @@
+.venv
+__pycache__
+pfspeak.egg-info/
+build/
+dist/
