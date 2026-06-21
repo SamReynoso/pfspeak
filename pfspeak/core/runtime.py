@@ -54,13 +54,13 @@ class CallableRegister:
         return decorator
 
 
-def resolve_optional_model_name(model: Optional[str]):
-    match model:
+def resolve_optional_model_name(model_label: Optional[str]):
+    match model_label:
         case None | "": return "kokoro-v1_0.pth"
-        case "kokoro-v1_0": return model + ".pth"
-        case "kokoro-v1_1-zh": return model + ".pth"
-        case "kokoro-v1_0.pth": return model
-        case "kokoro-v1_1-zh.pth": return model
+        case "kokoro-v1_0": return model_label + ".pth"
+        case "kokoro-v1_1-zh": return model_label + ".pth"
+        case "kokoro-v1_0.pth": return model_label
+        case "kokoro-v1_1-zh.pth": return model_label
         case "hexgrad/Kokoro-82M-v1.1-zh": return "kokoro-v1_1-zh.pth"
         case "hexgrad/Kokoro-82M": return "kokoro-v1_0.pth"
         case _: raise RuntimeError("This model name could not be resolved")
@@ -77,29 +77,21 @@ class Runtime:
         self._conn = None
         self.register = CallableRegister()
 
-        if app_spec is None:
-            self.app_spec = DEFAULT_APP_SPEC
-        else:
-            self.app_spec = app_spec 
+        if not app_spec: self.app_spec = DEFAULT_APP_SPEC
+        else: self.app_spec = app_spec 
+        if not runtime_spec: self.runtime_spec = RuntimeSpec()
+        else: self.runtime_spec = runtime_spec
 
-        if runtime_spec is None:
-            self.runtime_spec = RuntimeSpec()
-        else:
-            self.runtime_spec = runtime_spec
-
-        # TODO: Add fallback rules
-        self.resolve_device_name()
+        if True:
+            self.resolve_device_name()
+            self.prepare()
 
         self.pipeline = PfPipeline(self.runtime_spec)
 
-    def resolve_device_name(self):
-        if self.runtime_spec.device == "auto":
-            self.runtime_spec.device = "cpu"
-
     def prepare(self,
-                voices: list[str | Voices] | None = None,
-                voice: Optional[str | Voices] = None,
-                model: Optional[str] = None
+                voice_label: Optional[str | Voices] = None,
+                voice_labels: list[str | Voices] | None = None,
+                model_label: Optional[str] = None
                 ):
 
         def dl_voice(voice: str | Voices):
@@ -107,68 +99,78 @@ class Runtime:
             if not (self.app_spec.data_dir / voice_filename).exists():
                 self.download(voice_filename)
 
-        if voice: dl_voice(voice)
+        def dl_model(model_label: str):
+            if not (self.app_spec.data_dir / model_label).exists():
+                self.download(model_label)
 
-        if voices:
-            for voice in voices: dl_voice(voice)
+        def dl_model_params(param_path: Path):
+            if not param_path.exists():
+                file_path = self.download("config.json")
+                file_path.rename(param_path)
 
-        model_filename = resolve_optional_model_name(model)
-        if not (self.app_spec.data_dir / model_filename).exists():
-            self.download(model_filename)
-    
+        if voice_label: dl_voice(voice_label)
+
+        if voice_labels:
+            for voice in voice_labels: dl_voice(voice)
+
+        model_label = resolve_optional_model_name(model_label)
+        dl_model(model_label)
+        model_params_path = self.app_spec.data_dir / "model_params.json"
+        dl_model_params(model_params_path)
+
+
+    def resolve_voice_weights(self, voice_label: str):
+        voice_filename = f"voices/{voice_label}.pt"
+        voice_path = self.app_spec.data_dir / voice_filename
+        if not voice_path.exists():
+            returned_path = self.download(voice_filename)
+            assert voice_path == returned_path
+        return voice_path
+
+    def resolve_device_name(self):
+        if self.runtime_spec.device == "auto":
+            self.runtime_spec.device = "cpu"
 
     def get_model_config(self,
                          model_path: Optional[str | Path] = None,
                          model_label: Optional[str] = None,
                          ) -> ModelSpec:
 
-        def resolve_model_path(model_path, model_label) -> Path:
+        def resolve_model_weights(model_path, model_label) -> Path:
             if model_path and model_label:
-                raise RuntimeError
+                raise RuntimeError(
+                        "Path and Label can not both be used when resolving "
+                        "the model path"
+                        )
             if model_path:
-                if isinstance(model_path, str):
-                    model_path = Path(model_path)
+                model_path = Path(model_path)
             elif self.runtime_spec.model_path:
                 model_path = self.runtime_spec.model_path
             else:
                 filename = resolve_optional_model_name(model_label)
                 model_path = self.app_spec.data_dir / filename
             if not model_path.exists():
-                raise RuntimeError()
+                self.prepare(model_label=model_label)
             return model_path
 
-        model_path=resolve_model_path(model_path, model_label)
+        def resolve_model_params():
+            self.prepare()
+            return self.app_spec.data_dir / "model_params.json"
 
-        def resolve_config_path() -> Path:
-            if self.runtime_spec.config_path:
-                config_file = self.runtime_spec.config_path
-            else:
-                config_file = self.app_spec.data_dir / "kokoro.json"
-            return config_file
 
-        config_target = resolve_config_path()
-        if config_target.exists():
-            return ModelSpec(
-                    model_path=model_path,
-                    disable_complex=self.runtime_spec.disable_complex,
-                    map_location=self.runtime_spec.map_location,
-                    weights_only=self.runtime_spec.weights_only,
-                    device=self.runtime_spec.device,
-                    **json.loads(
-                        config_target.read_text()
-                                 )
+        model_weights=resolve_model_weights(model_path, model_label)
+        model_params = resolve_model_params()
+
+        return ModelSpec(
+                model_path=model_weights,
+                disable_complex=self.runtime_spec.disable_complex,
+                map_location=self.runtime_spec.map_location,
+                weights_only=self.runtime_spec.weights_only,
+                device=self.runtime_spec.device,
+                **json.loads(
+                    model_params.read_text()
                              )
-        elif self.runtime_spec.local_only:
-            raise RuntimeError
-        else:
-            config_file = self.download("config.json")
-            config_file.replace(config_target)
-            return ModelSpec(
-                    model_path=model_path,
-                    **json.loads(
-                        config_file.read_text()
-                        )
-                    )
+                         )
 
     def download(self, filename: str) -> Path:
         def resolve_hf_token() -> str | bool:
@@ -187,17 +189,8 @@ class Runtime:
                     )
                 )
 
-    def resolve_voice_path(self, voice_label: str):
-        voice_filename = f"voices/{voice_label}.pt"
-        voice_path = self.app_spec.data_dir / voice_filename
-        if not voice_path.exists():
-            # TODO: Only if you can down load now.
-            returned_path = self.download(voice_filename)
-            assert voice_path == returned_path
-        return voice_path
-
     def speak(self, text: str, voice: str, speed: Optional[float] = None):
-        voice_path = self.resolve_voice_path(voice)
+        voice_path = self.resolve_voice_weights(voice)
         assert self.pipeline 
         self.pipeline.en_callable = self.register.en_callable
         self.pipeline.speed = self.register.speed
@@ -230,7 +223,7 @@ class Runtime:
         pipeline.run_forever(conn)
 
     def speak_async(self, text: str, voice: str, speed: Optional[float] = None):
-        voice_path = self.resolve_voice_path(voice)
+        voice_path = self.resolve_voice_weights(voice)
         assert self.pipeline and self._conn
         self.pipeline.en_callable = self.register.en_callable
         self.pipeline.speed = self.register.speed
