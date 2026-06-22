@@ -3,12 +3,13 @@ from pathlib import Path
 
 from platformdirs import PlatformDirs
 
-from pfspeak.core.specs import AppSpec
+from pfspeak.tts.specs import AppSpec
 
 
 MODEL_NAMES = {
         'hexgrad/Kokoro-82M': 'kokoro-v1_0.pth',
         'hexgrad/Kokoro-82M-v1.1-zh': 'kokoro-v1_1-zh.pth',
+        "sherpa-zipformer": "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
         }
 
 
@@ -61,6 +62,6 @@ DEFAULT_APP_SPEC = AppSpec(
         cache_dir=Path(_platform_dirs.user_cache_dir),
         config_dir=Path(_platform_dirs.user_config_dir),
 
-        config_file=Path(_platform_dirs.user_config_dir) / "pfspeak.toml",
+        config_file=Path(_platform_dirs.user_config_dir) / "_app_name.toml",
         )
 

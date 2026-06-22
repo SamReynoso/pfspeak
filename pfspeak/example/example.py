@@ -2,7 +2,7 @@ import time
 start = time.time()
 #import sounddevice as sd
 
-from pfspeak.core.runtime import Runtime, Voices
+from pfspeak.tts.runtime import Runtime, Voices
 
 
 runtime = Runtime()

@@ -1,7 +1,7 @@
 from pathlib import Path
 from pydantic import BaseModel
 
-from pfspeak.core.defaults import DEFAULT_APP_SPEC as default
+from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
 
 
 class PfSpeakConfig(BaseModel):

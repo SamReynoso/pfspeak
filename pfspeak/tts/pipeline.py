@@ -2,26 +2,26 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pfspeak.core.model import PfModel
+    from pfspeak.tts.model import PfModel
     from torch import Tensor
 
 import json
 from pathlib import Path
 
-from pfspeak.core.specs import ModelSpec, RuntimeSpec
-from pfspeak.core.defaults import ALIASES, LANG_CODES
+
+from pfspeak.common.defaults import ALIASES, LANG_CODES
+from pfspeak.common.g2p import get_g2p_for_lang
+from pfspeak.tts.specs import ModelSpec, RuntimeSpec
+from pfspeak.common.dataclasses import Output, PipelineCmds, Result, TokenList
+
+from pathlib import Path
 from typing import (
         Any,
         Callable,
         Generator,
         List,
-        Optional,
         Union,
         )
-from pfspeak.core.dataclasses import Output, PipelineCmds, Result, TokenList
-
-from pathlib import Path
-from typing import Any, Optional
 
 
 
@@ -32,9 +32,7 @@ class Driver:
         if len(phoneme_string) > 510:
             m = f'Phoneme string too long: {len(phoneme_string)} > 510'
             raise ValueError(m)
-        output = Driver.infer(model, phoneme_string, pack, speed) 
-        yield Result(phoneme_string=phoneme_string,
-                     audio=output.audio)
+        yield Driver.infer(model, phoneme_string, pack, speed) 
 
     @staticmethod
     def generate_from_tokens(tokens: TokenList,
@@ -44,33 +42,24 @@ class Driver:
                              ) -> Generator[Result]:
         pack = voice.to(model.device)
         for ts in Driver.chunks(tokens):
-            result = Driver.infer(model, ts.phonemes, pack, speed)
-            result.tokens = ts
+            output = Driver.infer(model, ts.phonemes, pack, speed)
+            result = Result(tokens=ts, waveform=output.audio)
+            result.join_timestamps(output.pred_dur)
             yield result
 
     @staticmethod
     def infer(
             model: PfModel,
-            phoneme_string: str,
+            phonemes: str, 
             pack: Tensor,
             speed: Union[float, Callable[[int], float]] = 1
-            ) -> Result:
-        if not phoneme_string:
-            raise
-        elif len(phoneme_string) > 510:
-            phoneme_string = phoneme_string[:510]
+            ) -> Output:
+        if len(phonemes) > 510:
+            raise ValueError("Phoneme string length > 510")
         if callable(speed):
-            speed = speed(len(phoneme_string))
+            speed = speed(len(phonemes))
         
-        model_output: Output = model(phoneme_string,
-                                     pack[len(phoneme_string)-1],
-                                     speed,
-                                     return_output=True
-                                     )
-        return Result(phoneme_string=phoneme_string,
-                      audio=model_output.audio,
-                      prediction_duration=model_output.pred_dur,
-                      )
+        return model(phonemes, pack[len(phonemes)-1], speed, return_output=True)
 
     @staticmethod
     def waterfall_last(tokens: TokenList,
@@ -171,7 +160,7 @@ class PfPipeline:
 
     def load_model(self, model_spec: ModelSpec):
         import torch
-        from pfspeak.core.model import PfModel
+        from pfspeak.tts.model import PfModel
 
         def load_voice(voice_label: Path) -> Tensor:
             if voice_label in self.voices:
@@ -273,7 +262,6 @@ def device_available_or_raise(device, torch):
                 raise RuntimeError(f"Unknown device type: {device}")
     return device
 
-
 def lang_code_or_raise(lang_code):
     lang_code = lang_code.lower()
     lang_code = ALIASES.get(lang_code, lang_code)
@@ -284,35 +272,3 @@ def infer_lang_code_from_voice(voice_label):
     code = str(voice_label).split("/")[-1][0]
     assert code in ["a", "b"], code
     return code
-
-
-def get_g2p_for_lang(lang_code: str,
-                     version: Optional[str],
-                     trf = None,
-                     en_callable = None
-                     ):
-    british = lang_code == 'b'
-    from misaki import en, espeak
-    try:
-        if lang_code in 'ab':
-            try:
-                fallback = espeak.EspeakFallback(british=british)
-            except Exception as e:
-                fallback = None
-            g2p = en.G2P(trf=trf, british=british, fallback=fallback, unk='')
-        elif lang_code == 'j':
-                from misaki import ja
-                g2p = ja.JAG2P()
-        elif lang_code == 'z':
-                from misaki import zh
-                g2p = zh.ZHG2P(version= version, en_callable=en_callable)
-        else:
-            language = LANG_CODES[lang_code]
-            g2p = espeak.EspeakG2P(language=language)
-        return g2p
-    except ImportError:
-        if lang_code == 'z':
-            m = "You need to `pip install misaki[zh]` to use lang_code='z'"
-        else:
-            m = "You need to `pip install misaki[ja]` to use lang_code='j'"
-        raise ImportError(m)

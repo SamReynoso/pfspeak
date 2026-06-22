@@ -6,14 +6,14 @@ from multiprocessing import Pipe, Process
 
 from huggingface_hub import hf_hub_download
 
-from pfspeak.core.defaults import DEFAULT_APP_SPEC, Voices
-from pfspeak.core.pipeline import PfPipeline
-from pfspeak.core.specs import (
+from pfspeak.common.defaults import DEFAULT_APP_SPEC, Voices
+from pfspeak.tts.pipeline import PfPipeline
+from pfspeak.tts.specs import (
         AppSpec,
         ModelSpec,
         RuntimeSpec,
         )
-from pfspeak.core.dataclasses import PipelineCmds
+from pfspeak.common.dataclasses import PipelineCmds
 
 from typing import Callable, Dict, Optional
 

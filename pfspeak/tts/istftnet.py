@@ -1,4 +1,4 @@
-from pfspeak.core.custom_stft import CustomSTFT
+from pfspeak.tts.custom_stft import CustomSTFT
 from torch.nn.utils.parametrizations import weight_norm
 import math
 import torch

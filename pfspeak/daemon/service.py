@@ -6,7 +6,7 @@ import re
 import sounddevice as sd
 
 from pfspeak.daemon.pfspeak import pfconfig, commandline_args
-from pfspeak.core.runtime import Runtime
+from pfspeak.tts.runtime import Runtime
 
 PATH_RE = re.compile(r'(~|/)\S+')
 

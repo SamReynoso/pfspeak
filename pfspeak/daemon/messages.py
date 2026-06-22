@@ -1,7 +1,7 @@
-from pfspeak.core.runtime import Runtime
+from pfspeak.tts.runtime import Runtime
 from pfspeak.daemon.pfspeak import pfconfig
-from pfspeak.core.defaults import DEFAULT_APP_SPEC as default
-from pfspeak.core.specs import RuntimeSpec
+from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
+from pfspeak.tts.specs import RuntimeSpec
 
 
 Q = []

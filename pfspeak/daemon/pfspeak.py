@@ -9,7 +9,7 @@ import subprocess
 from multiprocessing import Process
 from pathlib import Path
 
-from pfspeak.core.defaults import DEFAULT_APP_SPEC as default
+from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
 
 
 from pydantic import BaseModel
@@ -29,6 +29,8 @@ class CommandlineArgs:
     install: bool = 'install' in sys.argv
     serve: bool = 'serve' in sys.argv
     test: bool = 'test' in sys.argv
+
+    listen: bool = 'listen' in sys.argv
 
 
 commandline_args = CommandlineArgs()

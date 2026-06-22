@@ -4,9 +4,7 @@ import sys
 import time
 import tomllib
 from multiprocessing import Process
-from pfspeak.core.defaults import DEFAULT_APP_SPEC as default
-
-from pfspeak.core.defaults import DEFAULT_APP_SPEC as default
+from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
 
 
 from pfspeak.daemon.common import PfSpeakConfig

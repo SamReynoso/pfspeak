@@ -1,17 +1,22 @@
 from __future__ import annotations
+from io import text_encoding
 from typing import TYPE_CHECKING, Literal
+
+from numpy._typing import NDArray
+
 
 if TYPE_CHECKING:
     from torch import Tensor
-    from misaki.ja import Token
     from misaki.en import MToken
+
+from numpy import array, float32
 
 from pathlib import Path
 
 from dataclasses import dataclass
 from pydantic import BaseModel
 
-from typing import Iterable, List, overload, Optional
+from typing import Iterable, List, Optional
 
 
 class PipelineCmds(BaseModel):
@@ -64,7 +69,12 @@ class TokenList:
 
     @property
     def text(self):
-        return "".join([ t.text + t.whitespace for t in self.tokens ])
+        return "".join(
+                [
+                    t.text + (" " if t.whitespace else "")
+                    for t in self.tokens if t.phonemes
+                    ]
+                ).strip()
 
     def __len__(self) -> int:
         return len(self.phonemes)
@@ -95,82 +105,65 @@ class Output:
 
 @dataclass
 class Result:
-    # graphemes: str
-    phoneme_string: Optional[str]
-    tokens: Optional[TokenList]
-    audio: Optional[Tensor]
-    prediction_duration: Optional[Tensor]
+    waveform: NDArray[float32]
+    tokens: TokenList
 
     def __init__(self,
-                 tokens: TokenList | None = None,
-                 phoneme_string: str | None = None,
-                 audio: Optional[Tensor] = None,
-                 prediction_duration: Optional[Tensor] = None
+                 waveform: Tensor | NDArray[float32],
+                 tokens: TokenList
                  ) -> None:
-        if tokens:
-            self.phoneme_string = tokens.phonemes
-        else:
-            self.phoneme_string = phoneme_string
+
         self.tokens = tokens
-        self.audio = audio
-        self.prediction_duration = prediction_duration
+        self.waveform = array(waveform).astype(float32)
 
     @property
-    def pred_dur(self) -> Optional[Tensor]:
-        return self.prediction_duration
+    def text(self):
+        return " ".join([t.text for t in self.tokens]).strip()
 
-    def join_timestamps(self):
-        if self.prediction_duration is None:
+    @property
+    def phonemes(self):
+        return " ".join([t.phonemes for t in self.tokens if t.phonemes]).strip()
+
+    def join_timestamps(self, prediction_duration):
+        if prediction_duration is None:
             return
-        assert self.pred_dur
         MAGIC_DIVISOR = 80
-        if not self.tokens or len(self.pred_dur) < 3:
+        if not self.tokens or len(prediction_duration) < 3:
             return
-        left = right = 2 * max(0, self.pred_dur[0].item() - 3)
+        left = right = 2 * max(0, prediction_duration[0].item() - 3)
         i = 1
         for t in self.tokens:
-            if i >= len(self.pred_dur)-1:
+            if i >= len(prediction_duration)-1:
                 break
             if not t.phonemes:
                 if t.whitespace:
                     i += 1
-                    left = right + self.pred_dur[i].item()
-                    right = left + self.pred_dur[i].item()
+                    left = right + prediction_duration[i].item()
+                    right = left + prediction_duration[i].item()
                     i += 1
                 continue
             j = i + len(t.phonemes)
-            if j >= len(self.pred_dur):
+            if j >= len(prediction_duration):
                 break
             t.start_ts = left / MAGIC_DIVISOR
-            token_dur = self.pred_dur[i: j].sum().item()
-            space_dur = self.pred_dur[j].item() if t.whitespace else 0
+            token_dur = prediction_duration[i: j].sum().item()
+            space_dur = prediction_duration[j].item() if t.whitespace else 0
             left = right + (2 * token_dur) + space_dur
             t.end_ts = left / MAGIC_DIVISOR
             right = left + space_dur
             i = j + (1 if t.whitespace else 0)
 
 
-    def __add__(self, other: "Result") -> "Result":
-        import torch
+    def __add__(self, other: Result) -> Result:
+        import numpy
         return Result(
-                phoneme_string=(
-                    (self.phoneme_string or "") + (other.phoneme_string or "")
-                    )
+                tokens=(self.tokens + other.tokens)
                 ,
-                tokens=(
-                    (self.tokens or TokenList()) + (other.tokens or TokenList())
-                    )
-                ,
-            audio=torch.cat([
-                t for t in (self.audio, other.audio)
-                if t is not None
-            ]),
-            prediction_duration=torch.cat([
-                t for t in (self.prediction_duration,
-                            other.prediction_duration)
-                if t is not None
-            ]),
-        )
+            waveform=numpy.concatenate(
+                [t for t in (self.waveform, other.waveform)]
+                )
+            ,
+            )
 
     @classmethod
     def join(cls, results: Iterable[Result]) -> Result:
@@ -186,45 +179,27 @@ class Result:
         return out
 
     def __str__(self) -> str:
-        dur = (
-                int(self.prediction_duration.sum())
-                if self.prediction_duration is not None
-                else None
-                )
-
-        audio_len = (
-            int(self.audio.numel())
-            if self.audio is not None
-            else None
-        )
-
-        p_len = len(self.phoneme_string) if self.phoneme_string else 0
-
         return (
             f"Result("
-            f"phonemes={p_len}, "
-            f"dur={dur}, "
-            f"audio={audio_len}"
+            f"waveform={len(self.waveform)}, "
+            f"text={len(self.text)}, "
+            f"phonemes={len(self.phonemes)}, "
             f")"
         )
 
     def __repr__(self) -> str:
-        ps = self.phoneme_string
-        if ps:
-            if len(ps) > 40:
-                ps = ps[:37] + "..."
+        ps = self.phonemes
+        if len(ps) > 40:
+            ps = ps[:37] + "..."
+
+        txt = self.text
+        if len(txt) > 40:
+            txt = txt[:37] + "..."
 
         return (
             f"Result("
             f"phoneme_string={ps!r}, "
-            f"audio_shape="
-            f"{tuple(self.audio.shape) if self.audio is not None else None}, "
-            f"pred_dur_shape="
-            f"{
-            tuple(self.prediction_duration.shape) 
-            if self.prediction_duration is not None
-            else None
-            }"
+            f"waveform_shape=,{txt!r}, "
+            f"{tuple(self.waveform.shape)}, "
             f")"
         )
-

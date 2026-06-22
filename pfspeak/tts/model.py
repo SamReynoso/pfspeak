@@ -2,11 +2,11 @@ import torch
 from torch.nn import Module
 from transformers import AlbertConfig
 
-from pfspeak.core.dataclasses import Output
-from pfspeak.core.istftnet import Decoder
-from pfspeak.core.modules import CustomAlbert, ProsodyPredictor, TextEncoder
+from pfspeak.common.dataclasses import Output
+from pfspeak.tts.istftnet import Decoder
+from pfspeak.tts.modules import CustomAlbert, ProsodyPredictor, TextEncoder
 
-from pfspeak.core.specs import ModelSpec
+from pfspeak.tts.specs import ModelSpec
 from typing import Tuple, Union
 from torch import Tensor
 
