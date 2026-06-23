@@ -1,43 +1,15 @@
-from importlib.util import find_spec
 import os
 import sys
 import time
 import tomllib
+from importlib.util import find_spec
 from multiprocessing import Process
 from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
+from pfspeak.services import pfconfig, commandline_args, _toml_template
 
 
-from pfspeak.daemon.common import PfSpeakConfig
+from pfspeak.services.listen import listen
 
-
-class CommandlineArgs:
-    regenerate: bool = '--regenerate' in sys.argv
-    silent: bool = '--silent' in sys.argv
-    bootstrap: bool = '--bootstrap' in sys.argv
-    verbose: bool = '--verbose' in sys.argv
-    messages: bool = '--messages' in sys.argv
-    import_check: bool = '--import-check' in sys.argv
-    help: bool = '--help' in sys.argv
-    config: bool = '--config' in sys.argv
-
-    install: bool = 'install' in sys.argv
-    serve: bool = 'serve' in sys.argv
-    test: bool = 'test' in sys.argv
-
-
-commandline_args = CommandlineArgs()
-
-
-_toml_template = f"""# {default.config_file}
-
-lang = "a"
-voice = "bf_lily"
-speech_speed = 1.0
-log_level = "DEBUG"
-"""
-
-
-pfconfig = PfSpeakConfig(**tomllib.loads(_toml_template))
 
 
 for app_dir in (default.cache_dir,
@@ -83,7 +55,7 @@ except Exception:
 try:
     for k, v in _config_toml_data.items():
         setattr(pfconfig, k, v)
-except Exception as e:
+except Exception:
     sys.stderr.write("Failed to parse configuration file\n")
     sys.stderr.write(f"Path: {default.config_file}\n")
     print(_config_toml_data)
@@ -92,36 +64,39 @@ except Exception as e:
 
 if __name__ == "__main__":
 
+    if commandline_args.verify:
+        from pfspeak.cli.verify import verify_all
+        exit(verify_all(commandline_args))
+
     if commandline_args.config:
-        from pfspeak.daemon.messages import config_output
+        from pfspeak.cli.messages import config_output
         print(config_output)
         sys.exit(0)
 
     elif commandline_args.help:
-        from pfspeak.daemon.messages import help_output
+        from pfspeak.cli.messages import help_output
         print(help_output)
         sys.exit(0)
 
     elif commandline_args.install:
-        from pfspeak.daemon.install import install
+        from pfspeak.services.install import install
         install(pfconfig)
 
     elif commandline_args.test:
         print("Testing pfspeak daemon:")
-        from pfspeak.daemon.service import serve
+        from pfspeak.services.speak import serve
         p = Process(target=serve)
         p.start()
         i = 0
         try:
             while not pfconfig.ready_file.exists():
-                print(i)
                 i += 1
                 time.sleep(pfconfig.latency)
                 if i >= 20 / pfconfig.latency:
                     p.kill()
                     sys.exit(1)
 
-            print("writing test message")
+            print("Writing test message")
             with open(pfconfig.pipe_path, "w") as f:
                 f.write("PfSpeak integration test.\n$SHUTDOWN\n")
             p.join()
@@ -132,16 +107,17 @@ if __name__ == "__main__":
             p.kill()
             pfconfig.pipe_path.unlink(missing_ok=True)
 
-    elif commandline_args.serve:
-        print("Starting pfspeak service:")
-        from pfspeak.daemon.service import serve
+    elif commandline_args.listen:
+        print("Starting...")
+        listen(time_to_live=120)
+        print("goodbye.")
+
+
+    elif commandline_args.speak:
+        print("Starting pfspeak speak:")
+        from pfspeak.services.speak import serve
         ret = serve()
         sys.exit(ret)
-
-    elif commandline_args.messages:
-        from pfspeak.daemon.messages import Q
-        for k, _ in Q:
-            print(k)
 
     elif commandline_args.import_check:
         requierd = (
@@ -155,4 +131,7 @@ if __name__ == "__main__":
             if find_spec(mod) is None:
                 sys.stderr.write(f"Missing dependency: {mod}\n")
                 sys.exit(50)
-    sys.exit(0)
+    else:
+        sys.stderr.write("Error: no commands provided. Use pfspeak help for more\n")
+        exit(1)
+sys.exit(0)

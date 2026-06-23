@@ -1,274 +1,126 @@
-from __future__ import annotations
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pfspeak.tts.model import PfModel
-    from torch import Tensor
-
-import json
 from pathlib import Path
+from multiprocessing import Pipe, Process
+
+from pfspeak.common.g2p import Graphemes2Phonemes
+
+from .model import SpeechModel
+from .specs import ModelParams
+from .dirver import Driver
+
+from pfspeak.common.dataclasses import PipelineCmds, Result
+from typing import Callable, Dict, Generator, TypeAlias, Union
 
 
-from pfspeak.common.defaults import ALIASES, LANG_CODES
-from pfspeak.common.g2p import get_g2p_for_lang
-from pfspeak.tts.specs import ModelSpec, RuntimeSpec
-from pfspeak.common.dataclasses import Output, PipelineCmds, Result, TokenList
-
-from pathlib import Path
-from typing import (
-        Any,
-        Callable,
-        Generator,
-        List,
-        Union,
-        )
-
-
-
-class Driver:
-
-    @staticmethod
-    def generate_from_string(phoneme_string: str, model, pack, speed):
-        if len(phoneme_string) > 510:
-            m = f'Phoneme string too long: {len(phoneme_string)} > 510'
-            raise ValueError(m)
-        yield Driver.infer(model, phoneme_string, pack, speed) 
-
-    @staticmethod
-    def generate_from_tokens(tokens: TokenList,
-                             model: PfModel,
-                             voice: Tensor,
-                             speed: float = 1,
-                             ) -> Generator[Result]:
-        pack = voice.to(model.device)
-        for ts in Driver.chunks(tokens):
-            output = Driver.infer(model, ts.phonemes, pack, speed)
-            result = Result(tokens=ts, waveform=output.audio)
-            result.join_timestamps(output.pred_dur)
-            yield result
-
-    @staticmethod
-    def infer(
-            model: PfModel,
-            phonemes: str, 
-            pack: Tensor,
-            speed: Union[float, Callable[[int], float]] = 1
-            ) -> Output:
-        if len(phonemes) > 510:
-            raise ValueError("Phoneme string length > 510")
-        if callable(speed):
-            speed = speed(len(phonemes))
-        
-        return model(phonemes, pack[len(phonemes)-1], speed, return_output=True)
-
-    @staticmethod
-    def waterfall_last(tokens: TokenList,
-                       next_count: int,
-                       waterfall: List[str] = ['!.?…', ':;', ',—'],
-                       bumps: List[str] = [')', '”']
-                       ) -> int:
-        for w in waterfall:
-            z = next(
-                    (i for i, t in reversed(list(enumerate(tokens)))
-                     if t.phonemes in set(w)), None
-                    )
-            if z is None:
-                continue
-            z += 1
-            if z < len(tokens) and tokens[z].phonemes in bumps:
-                z += 1
-            if next_count - len(tokens[:z]) <= 510:
-                return z
-        return len(tokens)
-
-    @staticmethod
-    def chunks(tokens: TokenList) -> Generator[TokenList]:
-        processed = TokenList()
-        phoneme_count = 0
-
-        for token in tokens:
-            if token.phonemes is None:
-                continue
-            token_size = len(token.phonemes) + len(token.whitespace)
-            if phoneme_count + token_size > 510:
-                split_at = Driver.waterfall_last(tokens,
-                                                 phoneme_count + token_size
-                                                 )
-                yield processed[:split_at]
-                processed = processed[split_at:]
-                phoneme_count = len(processed)
-            processed.append(token)
-            phoneme_count += token_size
-        if processed:
-            yield processed
-
+DifferedDef: TypeAlias = Union[Callable, None]
+VoidableDef: TypeAlias = Union[Callable, None]
 
 
 class PfPipeline:
 
-    def __init__(self, config: RuntimeSpec):
+    def __init__(self):
+        self.model: SpeechModel = SpeechModel()
+        self.g2p: Graphemes2Phonemes = Graphemes2Phonemes()
 
-        self.trf = config.trf
-        self.kokoro_version = config.kokoro_version
-        self.default_device = config.device
-        self.lang_code = config.default_lang
+        self._child = None
+        self._parent_conn = None
 
-        self.model: Any | None= None
-        self.load_voice: Callable | None = None
+    def load_model(self, params: ModelParams) -> None:
+        self.model.with_params(params) 
+        self.model.load_weights()
+        self.model.to_device()
+        self.model.to_inference_mode()
 
-        self.speed: Callable[[str], float] | None = None
-        self.en_callable: Callable | None = None
-        self.voices = {}
-        self._g2p = {}
+    def load_g2p(self, **kwargs):
+        self.g2p.load(**kwargs)
 
-        self.model_loaded: bool = False
-            
-
-    def set_lang(self, lang_code: str):
-        self.lang_code = lang_code_or_raise(lang_code)
-
-    def load_g2p(self, code: str):
-        lang = lang_code_or_raise(code)
-        if not lang in self._g2p:
-            self._g2p[lang] = get_g2p_for_lang(lang,
-                                               self.kokoro_version,
-                                               trf=self.trf,
-                                               en_callable=self.en_callable)
-    def g2p(self, text: str, voice: str | None = None, lang: str | None = None):
-        code = None
-        if voice and not lang:
-            code = infer_lang_code_from_voice(voice)
-        elif lang and not voice:
-            code = lang
-        elif not voice and not lang:
-            code = self.lang_code
-        else:
-            raise RuntimeError(
-                    "Calling g2p with both 'voice' and 'lang' is ambiguous"
+    def start_worker(self, params, g2p_params):
+        parent, child = Pipe()
+        self._child = Process(
+                target=PfPipeline.worker,
+                args=(
+                    params,
+                    g2p_params,
+                    child,
                     )
-        assert code is not None, "code was none but should have been some"
-        self.load_g2p(code)
-        ret = self._g2p[code](text)
-        # NOTE: this is where I sould put the TokenList Tokenizer
-        return ret
+                )
+        self._child.start()
+        self._parent_conn = parent
 
-    def _warn_for_language_voice_mismatch(self, voice):
-        if not voice.startswith(self.lang_code):
-            v = LANG_CODES.get(voice, voice)
-            p = LANG_CODES.get(self.lang_code, self.lang_code)
-            raise RuntimeError(f"{v} with {p}")
+    def start(self, params: ModelParams, g2p_params: Dict)  -> None:
+        self.load_model(params)
+        self.load_g2p(**g2p_params)
 
-    def load_model(self, model_spec: ModelSpec):
-        import torch
-        from pfspeak.tts.model import PfModel
+    @classmethod
+    def worker(cls, params, g2p_params, conn):
+        instance = cls()
+        instance.start(params, g2p_params)
+        instance.runforever(conn)
 
-        def load_voice(voice_label: Path) -> Tensor:
-            if voice_label in self.voices:
-                return self.voices[voice_label]
-            self.voices[voice_label] = torch.load(voice_label,
-                                                  weights_only=True
-                                                  )
-            return self.voices[voice_label]
+    def send(self,
+             text: str,
+             voice: Path,
+             lang: str | None = None,
+             speed: float = 1
+             ) -> None:
+        assert self._parent_conn
+        self._parent_conn.send(
+                PipelineCmds(
+                    op="speak",
+                    text=text,
+                    voice=voice,
+                    lang=lang,
+                    speed=speed
+                    )
+                )
 
-        self.model = init_model_or_raise(PfModel,
-                                         model_spec,
-                                         self.default_device
-                                         )
-        self.model.load_model(model_spec.model_path)
-        self.load_voice = load_voice
+    def recv(self) -> Result:
+        assert self._parent_conn
+        return self._parent_conn.recv()
 
-        self.model_loaded = True
+    def stop(self):
+        assert self._parent_conn and self._child
+        self._parent_conn.send(PipelineCmds(op="stop", text="", voice=Path()))
+        self._child.join()
 
-    def send(self, conn, cmds: PipelineCmds):
-        conn.send(cmds.model_dump_json())
-
-    def recv(self, conn):
-        return PipelineCmds(**json.loads(conn.recv()))
-
-    def run_forever(self, conn):
-
-        assert self.model
+    def runforever(self, conn):
         while True:
-            cmds: PipelineCmds = self.recv(conn)
-
+            cmds: PipelineCmds = conn.recv()
             match cmds.op:
                 case 'stop':
-                    break
+                    return
                 case 'speak':
-                    for result in self.generate(cmds):
+                    for result in self.generate(
+                            text=cmds.text,
+                            voice_path=cmds.voice,
+                            lang=cmds.lang,
+                            speed=cmds.speed,
+                            ):
                         conn.send(result)
 
-    def generate(self, cmds: PipelineCmds) -> Any:
-        if self.model is None or self.load_voice is None:
-            raise RuntimeError("Call load model with a model spec.")
+    def generate(self,
+                 text: str,
+                 voice_path: Path,
+                 lang: str | None = None,
+                 speed: float = 1,
+                 ) -> Generator[Result]:
+        tokens = self.g2p(text, lang=lang, voice_path=voice_path)
+        pack = self.model.load_voice(voice_path)
+        yield from Driver.generate_from_tokens(tokens, self.model, pack, speed)
 
-        assert cmds.text
+    def __call__(self,
+                 text: str,
+                 voice: Path,
+                 lang: str | None = None,
+                 speed: float = 1,
+                 ) -> Result:
+        return Result.join(self.generate(text, voice, lang=lang, speed=speed))
 
-        if not cmds.speed:
-            if self.speed:
-                speed = self.speed(cmds.text)
-            else:
-                speed = 1
-        else:
-            speed = cmds.speed
-
-        if cmds.lang:
-            lang_code = cmds.lang
-        else:
-            lang_code = infer_lang_code_from_voice(cmds.voice)
-        if lang_code in 'ab':
-            x, tokens = self.g2p(cmds.text, lang=cmds.lang)
-            print(x, "this is en g2p return x, _")
-            assert isinstance(tokens, list)
-            tokens = TokenList(tokens=tokens)
-        else:
-            raise # yield from non_en_process()
-
-        pack = self.load_voice(cmds.voice,).to(self.model.device)
-        yield from Driver.generate_from_tokens(tokens,
-                                               self.model,
-                                               pack,
-                                               speed)
-
-    def __call__(self, cmds: PipelineCmds) -> Result:
-        return Result.join(self.generate(cmds))
-
-
-def init_model_or_raise(model_class, config, device):
-    try:
-        return model_class(config=config).to(device).eval()
-    except RuntimeError as e:
-        if device == 'cuda':
-            raise RuntimeError(f"Failed to initialize model on CUDA: {e}.") 
-        raise
-
-
-def device_available_or_raise(device, torch):
-    match device:
-        case 'cuda':
-            if not torch.cuda.is_available():
-                raise RuntimeError("CUDA requested but not available")
-        case 'mps':
-            if not torch.backends.mps.is_available():
-                raise RuntimeError("MPS requested but not available")
-        case None:
-            device = 'cpu'
-            if torch.cuda.is_available():
-                device = 'cuda'
-            elif torch.backends.mps.is_available():
-                device = 'mps'
-        case _:
-            if device != 'cpu':
-                raise RuntimeError(f"Unknown device type: {device}")
-    return device
-
-def lang_code_or_raise(lang_code):
-    lang_code = lang_code.lower()
-    lang_code = ALIASES.get(lang_code, lang_code)
-    assert lang_code in LANG_CODES, (lang_code, LANG_CODES)
-    return lang_code
-
-def infer_lang_code_from_voice(voice_label):
-    code = str(voice_label).split("/")[-1][0]
-    assert code in ["a", "b"], code
-    return code
+def resolve_speed_options(text: str,
+                          speed: float | None = None,
+                          speed_fn: VoidableDef = None,
+                          ) -> float:
+    if speed:
+        return speed
+    if speed_fn:
+        return speed_fn(text)
+    return 1

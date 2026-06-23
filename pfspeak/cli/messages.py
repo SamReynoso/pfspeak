@@ -1,7 +1,7 @@
-from pfspeak.tts.runtime import Runtime
-from pfspeak.daemon.pfspeak import pfconfig
-from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
-from pfspeak.tts.specs import RuntimeSpec
+from pfspeak.services import pfconfig
+from pfspeak.common import DEFAULT_APP_SPEC as default
+from pfspeak.tts.runtime import TextToSpeech
+from pfspeak.tts.specs import SpeechSpec
 
 
 Q = []
@@ -146,7 +146,7 @@ boot_messages = {
     ),
 }
 
-rs = RuntimeSpec()
+rs = SpeechSpec()
 
 config_output = (
 f"""Current PfSpeak Configuration
@@ -164,7 +164,7 @@ Directories
 
 Pipeline
     repo id:            {rs.model_id}
-    model:              {Runtime(runtime_spec=rs).get_model_config().model_path}
+    model:              {TextToSpeech(runtime_spec=rs).model_params.weights_file}
 
 Audio
     language:           {pfconfig.lang}

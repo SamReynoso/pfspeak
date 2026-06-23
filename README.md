@@ -56,7 +56,10 @@ cd pfspeak
 
 ```
 
-The bootstrap installer is the fastet way to initialize environment for the pfspeak daemon and doesn't require running `python -m pfspeak install` or even cloning the repository. It pfspeak daemon service is only available for Linux base systems for the time being. 
+The bootstrap installer is the fastet way to initialize environment for 
+the pfspeak daemon and doesn't require running `python -m pfspeak install`
+or even cloning the repository. It pfspeak daemon service is only 
+available for Linux base systems for the time being. 
 
 #### Example Daemon Request
 
@@ -174,4 +177,4 @@ Planned:
 
 ## License
 
-See LICENSE for details.
+Pending

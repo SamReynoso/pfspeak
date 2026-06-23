@@ -1,9 +1,20 @@
 from pathlib import Path
-from typing import Literal, Optional, Any, Dict
+
+from pfspeak.common.defaults import RuntimeSpec
+
 from pydantic import BaseModel
+from typing import Literal, Optional, Any, Dict
 
 
-class ModelSpec(BaseModel):
+class SpeechSpec(RuntimeSpec):
+    model_id: str = "hexgrad/Kokoro-82M"
+    model_label: str | None = "kokoro"
+
+    source_params_filename: str = "config.json"
+    params_filename: str = "model_params.json"
+
+
+class ModelParams(BaseModel):
     vocab: Any
     style_dim: Any
     n_layer: Any
@@ -18,78 +29,30 @@ class ModelSpec(BaseModel):
 
     disable_complex: bool = False
     map_location: str = "cpu"
+    allow_mps_fallback: bool = True
     weights_only: bool = True
-    device: str = "cpu"
-
-    model_path: Path
-
-
-class AppSpec(BaseModel):
-    version: str
-    org_name: str
-    app_name: str
-
-    data_dir: Path
-    cache_dir: Path
-    config_dir: Path
-
-    config_file: Path
-
-
-class RuntimeSpec(BaseModel):
-    name: str = "default"
-
-    data_root: Path = Path("./data")
-    cache_root: Path = Path("./cache")
-    voice_root: Optional[Path] = None
-    config_path: Optional[Path] = None
-    model_path: Optional[Path] = None
-
-    model_source: Literal[
-            "local",
-            "huggingface",
-            ] = "huggingface"
-    model_id: str = "hexgrad/Kokoro-82M"
-    voice_source: Literal[
-            "local",
-            "huggingface",
-            ] = "huggingface"
-    token: Optional[str] = None
-    discover_token: bool = True
-    env_token_name: Optional[str] = None
-
-    use_provider_config: bool = True
-    local_only: bool = False
-    preload: bool = True
-    lazy_load: bool = False
-    verify: bool = True
-    raise_for_errors: bool = True
-    offline: bool = False
-    auto_download: bool = True
-
     device: Literal[
             "auto",
             "cpu",
             "cuda",
             "mps",
             ] = "auto"
+    weights_file: Path
 
-    allow_mps_fallback: bool = True
+
+class G2PSpec(BaseModel):
     default_lang: str = "a"
     trf: bool = False
-    default_speed: float = 1.0
-    kokoro_version: Optional[str] = None
+    version: Optional[str] = None
 
-    disable_complex: bool = False
-    map_location: str = "cpu"
-    weights_only: bool = True
-
-
-    def __init__(self, /, **data: Any) -> None:
-        super().__init__(**data)
-        if self.model_id.endswith('/Kokoro-82M'):
-            self.kokoro_version = None
+    @staticmethod
+    def infer_version_from_kokoro(kokoro_model_id):
+        if kokoro_model_id.endswith('/Kokoro-82M'):
+            return None
         else:
-            self.kokoro_version = '1.1'
+            return '1.1'
 
-
+    @classmethod
+    def from_kokoro_model_id(cls, /, kokoro_model_id, **data: Any):
+        version = cls.infer_version_from_kokoro(kokoro_model_id)
+        return cls(version=version, **data)

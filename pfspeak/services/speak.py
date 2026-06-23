@@ -3,22 +3,21 @@ import sys
 import time
 import re
 
-import sounddevice as sd
 
-from pfspeak.daemon.pfspeak import pfconfig, commandline_args
-from pfspeak.tts.runtime import Runtime
+from pfspeak.services import pfconfig, commandline_args
+from pfspeak.tts.runtime import TextToSpeech
 
 PATH_RE = re.compile(r'(~|/)\S+')
 
 def serve() -> int:
+    import sounddevice as sd
     try:
         fd = os.open(pfconfig.pipe_path, os.O_RDONLY | os.O_NONBLOCK)
-    except Exception as e:
-        sys.stderr.write(f"Could not get file descriptor\n")
+    except Exception:
+        sys.stderr.write("Could not get file descriptor\n")
         sys.exit(17)
-    print(pfconfig.pipe_path)
 
-    runtime = Runtime()
+    runtime = TextToSpeech()
 
     with open(fd, 'r') as fifo:
 
@@ -63,7 +62,6 @@ def serve() -> int:
                 # Read lines, add them to the backlog. Also handles magic words
                 for line in fifo:
                     line = line.strip()
-                    print(line)
                     if commandline_args.verbose:
                         print(line)
 
@@ -111,7 +109,7 @@ def serve() -> int:
                                 PATH_RE.sub("path like", '\n'.join(queue)),
                                 pfconfig.voice,
                                 speed=pfconfig.speech_speed
-                                ).audio
+                                ).waveform
                             )
                     queue = []
                     size = 0

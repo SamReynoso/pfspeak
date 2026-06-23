@@ -1,226 +1,185 @@
-import torch
-from torch.nn import Module
-from transformers import AlbertConfig
+from functools import wraps
+from pathlib import Path
+import sys
+from typing import Any, Dict, Literal
 
+from pfspeak.tts.specs import ModelParams
+
+from pfspeak.common.just_checking import (
+        TypeArchitecture,
+        NDArray,
+        Float32,
+        TypeTensor
+        )
 from pfspeak.common.dataclasses import Output
-from pfspeak.tts.istftnet import Decoder
-from pfspeak.tts.modules import CustomAlbert, ProsodyPredictor, TextEncoder
-
-from pfspeak.tts.specs import ModelSpec
-from typing import Tuple, Union
-from torch import Tensor
+from dataclasses import dataclass
+from types import ModuleType
 
 
+def architecture_initialized(fn):
+    @wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self.arch is None:
+            if self.params is None:
+                raise RuntimeError(
+                        "Attemting to initiate Architecture without module "
+                        "parameters"
+                        )
+            from pfspeak.tts.architecture import KokoroArchitecture
+            import torch
+            self.arch = KokoroArchitecture(self.params)
+            self.torch = torch
+        return fn(self, *args, **kwargs)
+    return wrapper
 
-class PfModel(Module):
-    def __init__( self, config: ModelSpec):
+def torch_imported(fn):
+    @wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        if self.torch is None:
+            import torch
+            self.torch = torch
+        return fn(self, *args, **kwargs)
+    return wrapper
 
-        super().__init__()
+@dataclass(frozen=True)
+class CudaSupport:
+    available: bool
+    supported: bool
 
-        self.map_location = config.map_location
-        self.weights_only = config.weights_only
+class SpeechModel:
+    def __init__(self, paramaters: ModelParams | None = None):
+        self.params = paramaters
+        self.device: Literal["cpu", "cuda", "mps"] | None = None
+        self.arch: TypeArchitecture | None = None
+        self.torch: ModuleType | None = None
+        self.weigth_loaded: bool = False
+        self.voices: Dict[Path, TypeTensor] = {}
 
-        self.vocab = config.vocab
-        self.bert = CustomAlbert(
-                AlbertConfig(
-                    vocab_size=config.n_token,
-                    **config.plbert)
-                )
+    def with_params(self, params: ModelParams):
+        self.params = params
 
-        self.bert_encoder = torch.nn.Linear(
-                self.bert.config.hidden_size,
-                config.hidden_dim
-                )
 
-        self.context_length = self.bert.config.max_position_embeddings
+    @architecture_initialized
+    def to_device(self, device: str | None = None):
+        self.raise_for_missing_weights()
+        assert self.arch and self.params
+        try:
+            device = device or self.params.device
+            self.device = self.resolve_device_label(device)
+            self.arch.to(self.device)
+            return self
+        except RuntimeError as e:
+            # TODO: Create an exception for this.
+            raise e from e
 
-        self.predictor = ProsodyPredictor(
-                style_dim=config.style_dim,
-                d_hid=config.hidden_dim,
-                nlayers=config.n_layer,
-                max_dur=config.max_dur,
-                dropout=config.dropout
-                )
+    @architecture_initialized
+    def to_inference_mode(self):
+        self.raise_for_missing_weights()
+        assert self.arch
+        return self.arch.eval()
 
-        self.text_encoder = TextEncoder(
-                channels=config.hidden_dim,
-                kernel_size=config.text_encoder_kernel_size,
-                depth=config.n_layer,
-                n_symbols=config.n_token
-                )
+    @architecture_initialized
+    def load_weights(self,
+                     weights_file: Path | None = None,
+                     map_location: str | None = None,
+                     ):
+        if weights_file is None:
+            assert self.params
+            weights_file = self.params.weights_file
 
-        self.decoder = Decoder(
-                dim_in=config.hidden_dim,
-                style_dim=config.style_dim,
-                dim_out=config.n_mels,
-                disable_complex=config.disable_complex,
-                **config.istftnet
-                )
+        if map_location is None:
+            assert self.params
+            map_location = self.params.map_location
 
-    def load_model(self, model_path: str):
-
-        loaded = torch.load(model_path,
-                            map_location=self.map_location,
-                            weights_only=self.weights_only)
+        assert self.torch
+        loaded = self.torch.load(weights_file,
+                                 map_location=map_location,
+                                 weights_only=True)
 
         for key, state_dict in loaded.items():
-            assert hasattr(self, key), key
+            assert hasattr(self.arch, key), key
             try:
-                getattr(self, key).load_state_dict(state_dict)
-            except:
+                getattr(self.arch, key).load_state_dict(state_dict)
+            except Exception:
                 state_dict = {k[7:]: v for k, v in state_dict.items()}
-                getattr(self, key).load_state_dict(state_dict, strict=False)
+                getattr(self.arch, key).load_state_dict(
+                        state_dict,
+                        strict=False)
+        self.weigth_loaded = True
+
+    @torch_imported
+    def load_voice(self, voice_path: Path) -> TypeTensor:
+        assert self.torch
+        if voice_path in self.voices:
+            return self.voices[voice_path]
+        voice = self.torch.load(voice_path, weights_only=True)
+        if self.device:
+            self.voices[voice_path] = voice.to(self.device)
+        else:
+            raise RuntimeError(
+            "Attempting to load voice tensor before specifying a target device"
+            )
+        return self.voices[voice_path]
+
+    @staticmethod
+    def cast_waveform(output: Output) -> NDArray[Float32]:
+        from numpy import array, float32
+        return array(output.audio).astype(float32)
 
     @property
-    def device(self):
-        return self.bert.device
+    def cuda_support(self) -> CudaSupport:
+        assert self.torch
+        available = self.torch.cuda.is_available()
+        supported = False
+        if available:
+            major, minor = self.torch.cuda.get_device_capability()
+            supported = f"sm_{major}{minor}" in self.torch.cuda.get_arch_list()
+        return CudaSupport(available=available, supported=supported)
 
+    @torch_imported
+    def resolve_device_label(self, device) -> Literal["cpu", "mps", "cuda"]:
+        assert self.torch
 
-    @torch.no_grad()
-    def forward_with_tokens(self,
-                            input_ids: Tensor,
-                            ref_s: Tensor,
-                            speed: float = 1
-                            ) -> Tuple[Tensor, Tensor]:
+        if device == "cpu":
+            return "cpu"
 
-        input_lengths = torch.full(
-            (input_ids.shape[0],), 
-            input_ids.shape[-1], 
-            device=input_ids.device,
-            dtype=torch.long
-        )
+        if device not in ["cuda", "mps", "auto"]:
+            raise RuntimeError(f"Unknown device type: {device}")
 
-        text_mask = (
-                torch.gt(
-                    ( 1 + (
-                        torch.arange(float(input_lengths.max()))
-                        .unsqueeze(0)
-                        .expand(input_lengths.shape[0], -1)
-                        .type_as(input_lengths)
-                        ) 
-                     )
-                    ,
-                    input_lengths.unsqueeze(1)).to(self.device)
-                )
+        cuda = self.cuda_support
+        match device:
+            case "cuda":
+                if not cuda.available:
+                    raise RuntimeError("CUDA requested but not available")
+                elif not cuda.supported:
+                    raise RuntimeError("GPU unsupported by this PyTorch build")
+            case "mps":
+                if not self.torch.backends.mps.is_available():
+                    raise RuntimeError("MPS requested but not available")
+            case "auto":
+                device = "cpu"
+                if cuda.available:
+                    if cuda.supported:
+                        device = "cuda"
+                    else:
+                        sys.stderr.write(
+                                "\nPfSpeak: "
+                                "GPU unsupported by this PyTorch build\n"
+                                )
+                elif self.torch.backends.mps.is_available():
+                    device = "mps"
 
-        ref_s_tail = ref_s[:, 128:]
-        ref_s_head = ref_s[:, :128]
-        d = self.predictor.text_encoder(
-                (
-                    self.bert_encoder(
-                        self.bert(
-                            input_ids,
-                            attention_mask=(
-                                ~ text_mask
-                                ).int()
-                            )
-                        ).transpose(-1, -2)
-                    )
-                ,
-                ref_s_tail,
-                input_lengths,
-                text_mask
-                ,
-                )
+        return device
 
-        prediction_duration= (
-                torch.round(
-                    torch.sigmoid(
-                        self.predictor.duration_proj(
-                            # Project Long Shor Term Memory
-                            self.predictor.lstm(d)[0]
-                            )
-                        )
-                            .sum(dim=-1)
-                            / speed
-                    )
-                .clamp(min=1)
-                .long()
-                .squeeze()
-                )
+    def raise_for_missing_weights(self):
+        if not self.weigth_loaded:
+            raise RuntimeError(
+                    "Weights where never loaded. "
+                    "Attempting to operate with randomly initialized weights.")
 
-        indices = torch.repeat_interleave(
-                torch.arange(
-                    input_ids.shape[1],
-                    device=self.device
-                    )
-                ,
-                prediction_duration
-                )
-
-        pred_aln_trg = torch.zeros(
-                (input_ids.shape[1], indices.shape[0]
-                 )
-                , device=self.device
-                )
-
-        pred_aln_trg[indices, torch.arange(indices.shape[0])] = 1
-        pred_aln_trg = pred_aln_trg.unsqueeze(0).to(self.device)
-
-        F0_pred, N_pred = self.predictor.F0Ntrain(
-                d.transpose(-1, -2)
-                @
-                pred_aln_trg
-                ,
-                ref_s_tail
-                )
-
-        audio = self.decoder(
-                (
-                    self.text_encoder(
-                        input_ids,
-                        input_lengths,
-                        text_mask
-                        )
-                    @
-                    pred_aln_trg
-                )
-                ,
-                F0_pred,
-                N_pred,
-                ref_s_head
-                ,
-                ).squeeze()
-
-        return audio, prediction_duration
-
-    def forward(self,
-                phonemes: str,
-                ref_s: Tensor,
-                speed: float = 1,
-                return_output: bool = False
-                ) -> Union[Output, Tensor]:
-
-        input_ids = [
-                self.vocab[p] 
-                for p in phonemes if self.vocab.get(p) is not None
-                ]
-
-        input_ids = torch.LongTensor([[0, *input_ids, 0]]).to(self.device)
-        ref_s = ref_s.to(self.device)
-
-        assert len(input_ids) + 2 <= self.context_length, "ids > (context - 2)"
-        audio, pred_dur = self.forward_with_tokens(input_ids, ref_s, speed)
-        audio = audio.squeeze().cpu()
-
-        if pred_dur is not None:
-            pred_dur = pred_dur.cpu()
-
-        if return_output:
-            return Output(audio=audio, pred_dur=pred_dur)
-        return audio
-
-
-class KModelForONNX(torch.nn.Module):
-    def __init__(self, kmodel: PfModel):
-        super().__init__()
-        self.kmodel = kmodel
-
-    def forward(self,
-                input_ids: torch.LongTensor,
-                ref_s: torch.FloatTensor,
-                speed: float = 1
-                ) -> Tuple[Tensor, Tensor]:
-        waveform, duration = self.kmodel.forward_with_tokens(input_ids,
-                                                             ref_s, speed)
-        return waveform, duration
+    @architecture_initialized
+    def __call__(self, *args: Any, **kwds: Any) -> Any:
+        self.raise_for_missing_weights()
+        assert self.arch
+        self.to_inference_mode()
+        return self.arch.__call__(*args, **kwds)

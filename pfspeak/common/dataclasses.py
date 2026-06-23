@@ -1,32 +1,21 @@
-from __future__ import annotations
-from io import text_encoding
-from typing import TYPE_CHECKING, Literal
-
-from numpy._typing import NDArray
-
-
-if TYPE_CHECKING:
-    from torch import Tensor
-    from misaki.en import MToken
-
-from numpy import array, float32
+from time import time
 
 from pathlib import Path
-
 from dataclasses import dataclass
 from pydantic import BaseModel
 
-from typing import Iterable, List, Optional
+
+from typing import Iterable, List, Optional, Any, Literal
+
+from pfspeak.common.just_checking import TypeTensor, NDArray, Float32
 
 
 class PipelineCmds(BaseModel):
     op: Literal["stop", "speak"]
-    text: Optional[str] = None
-    voice: Optional[Path] = None
-    speed: Optional[float] = None
+    text: str
+    voice: Path
     lang: Optional[str] = None
-
-type TokenIterable = Iterable[PfToken] | Iterable[MToken] | TokenList
+    speed: float = 1 
 
 
 @dataclass
@@ -38,21 +27,14 @@ class PfToken:
     end_ts: Optional[float] = 0
 
 
+type TokenIterable = Iterable[PfToken] | TokenList
+
 class TokenList:
 
     def __init__(self, tokens: Optional[TokenIterable] = None): 
+        self.tokens: List[PfToken] = []
         if tokens:
-            self.tokens: List[PfToken] = [
-                PfToken(
-                    text=t.text,
-                    phonemes=t.phonemes,
-                    whitespace=t.whitespace,
-                    start_ts=t.start_ts,
-                    ) 
-                for t in tokens
-                ]
-        else:
-            self.tokens = []
+            self.tokens =  list(tokens)
         self._phonemes = None
         self._text = None
 
@@ -99,22 +81,29 @@ class TokenList:
 
 @dataclass
 class Output:
-    audio: Tensor
-    pred_dur: Optional[Tensor] = None
+    audio: TypeTensor
+    pred_dur: Optional[TypeTensor] = None
 
+
+Waveform = NDArray[Float32]
+WaveformBuffer = List[Waveform]
 
 @dataclass
 class Result:
-    waveform: NDArray[float32]
+    waveform: NDArray[Float32]
     tokens: TokenList
 
     def __init__(self,
-                 waveform: Tensor | NDArray[float32],
+                 waveform: Waveform | WaveformBuffer,
                  tokens: TokenList
                  ) -> None:
 
         self.tokens = tokens
-        self.waveform = array(waveform).astype(float32)
+        if isinstance(waveform, list):
+            import numpy
+            self.waveform = numpy.concatenate(waveform)
+        else:
+            self.waveform = waveform
 
     @property
     def text(self):
@@ -123,6 +112,14 @@ class Result:
     @property
     def phonemes(self):
         return " ".join([t.phonemes for t in self.tokens if t.phonemes]).strip()
+
+    def apply_timestamp(self, timestamp: Any = None):
+        if timestamp is None:
+            ct = time()
+        else:
+            ct = timestamp.currentTime
+        for t in self.tokens:
+            t.start_ts = ct
 
     def join_timestamps(self, prediction_duration):
         if prediction_duration is None:
