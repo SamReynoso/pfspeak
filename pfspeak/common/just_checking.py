@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Iterable, TypeAlias, Any
 
 if TYPE_CHECKING:
     from misaki.en import MToken as TypeMToken
-    from pfspeak.tts.architecture import KokoroArchitecture as TypeArchitecture
+    from pfspeak.core.tts.kokoro.architecture import KokoroArchitecture as TypeArchitecture
 
     from sherpa_onnx import OnlineRecognizer as TypeRecognizer
 

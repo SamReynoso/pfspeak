@@ -1,10 +1,5 @@
-from pfspeak.tts.runtime import TextToSpeech
-from pfspeak.stt.runtime import SpeechToText, KrokoRecognizerSpec
-from pfspeak.common import just_checking
+from pfspeak.core.core import PfSpeak
 
 __all__ = [
-        "TextToSpeech",
-        "SpeechToText",
-        "KrokoRecognizerSpec",
-        "just_checking",
+        "PfSpeak"
         ]

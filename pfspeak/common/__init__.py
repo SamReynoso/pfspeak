@@ -1,5 +1,5 @@
 from .dataclasses import PipelineCmds, PfToken, TokenList, Output, Result 
-from .defaults import ALIASES, MODEL_NAMES, LANG_CODES, Voices, DEFAULT_APP_SPEC
+from .defaults import ALIASES, LANG_CODES, Voices, DEFAULT_APP_SPEC
 from .models import install_model
 
 
@@ -11,7 +11,6 @@ __all__ = [
         "Result",
         "ALIASES",
         "ALIASES",
-        "MODEL_NAMES",
         "LANG_CODES",
         "Voices",
         "DEFAULT_APP_SPEC",

@@ -1,7 +1,7 @@
 from pfspeak.common import Output, Result, TokenList
 from pfspeak.common.just_checking import TypeTensor 
 
-from pfspeak.tts.model import SpeechModel
+from .inference import SpeechModel
 
 from typing import Callable, Generator, List, Union
 

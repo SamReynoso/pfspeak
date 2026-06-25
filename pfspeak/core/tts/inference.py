@@ -1,9 +1,9 @@
-from functools import wraps
-from pathlib import Path
 import sys
-from typing import Any, Dict, Literal
+from pathlib import Path
 
-from pfspeak.tts.specs import ModelParams
+
+from pfspeak.core.params import SpeechParams
+from pfspeak.extra.decorators import architecture_initialized, torch_imported
 
 from pfspeak.common.just_checking import (
         TypeArchitecture,
@@ -11,43 +11,15 @@ from pfspeak.common.just_checking import (
         Float32,
         TypeTensor
         )
+
 from pfspeak.common.dataclasses import Output
-from dataclasses import dataclass
+from pfspeak.common.dataclasses import CudaSupport
+from typing import Any, Dict, Literal
 from types import ModuleType
 
 
-def architecture_initialized(fn):
-    @wraps(fn)
-    def wrapper(self, *args, **kwargs):
-        if self.arch is None:
-            if self.params is None:
-                raise RuntimeError(
-                        "Attemting to initiate Architecture without module "
-                        "parameters"
-                        )
-            from pfspeak.tts.architecture import KokoroArchitecture
-            import torch
-            self.arch = KokoroArchitecture(self.params)
-            self.torch = torch
-        return fn(self, *args, **kwargs)
-    return wrapper
-
-def torch_imported(fn):
-    @wraps(fn)
-    def wrapper(self, *args, **kwargs):
-        if self.torch is None:
-            import torch
-            self.torch = torch
-        return fn(self, *args, **kwargs)
-    return wrapper
-
-@dataclass(frozen=True)
-class CudaSupport:
-    available: bool
-    supported: bool
-
 class SpeechModel:
-    def __init__(self, paramaters: ModelParams | None = None):
+    def __init__(self, paramaters: SpeechParams | None = None):
         self.params = paramaters
         self.device: Literal["cpu", "cuda", "mps"] | None = None
         self.arch: TypeArchitecture | None = None
@@ -55,22 +27,20 @@ class SpeechModel:
         self.weigth_loaded: bool = False
         self.voices: Dict[Path, TypeTensor] = {}
 
-    def with_params(self, params: ModelParams):
-        self.params = params
 
+    def load_model(self, weight_file: Path, maps_location: str) -> None:
+        self.load_weights(weight_file, maps_location)
+        self.to_device()
+        self.to_inference_mode()
 
     @architecture_initialized
     def to_device(self, device: str | None = None):
         self.raise_for_missing_weights()
         assert self.arch and self.params
-        try:
-            device = device or self.params.device
-            self.device = self.resolve_device_label(device)
-            self.arch.to(self.device)
-            return self
-        except RuntimeError as e:
-            # TODO: Create an exception for this.
-            raise e from e
+        device = device or self.params.device
+        self.device = self.resolve_device_label(device)
+        self.arch.to(self.device)
+        return self
 
     @architecture_initialized
     def to_inference_mode(self):
@@ -79,23 +49,11 @@ class SpeechModel:
         return self.arch.eval()
 
     @architecture_initialized
-    def load_weights(self,
-                     weights_file: Path | None = None,
-                     map_location: str | None = None,
-                     ):
-        if weights_file is None:
-            assert self.params
-            weights_file = self.params.weights_file
-
-        if map_location is None:
-            assert self.params
-            map_location = self.params.map_location
-
-        assert self.torch
+    def load_weights(self, weights_file: Path, map_location: str) -> None:
+        assert self.params and self.torch
         loaded = self.torch.load(weights_file,
                                  map_location=map_location,
                                  weights_only=True)
-
         for key, state_dict in loaded.items():
             assert hasattr(self.arch, key), key
             try:

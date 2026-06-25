@@ -4,17 +4,26 @@ from pathlib import Path
 from platformdirs import PlatformDirs
 from pydantic import BaseModel
 
+from pfspeak.core.params import RecognizerType
 
-MODEL_NAMES = {
-        'hexgrad/Kokoro-82M':
-        'kokoro-v1_0.pth'
-        ,
-        'hexgrad/Kokoro-82M-v1.1-zh':
-        'kokoro-v1_1-zh.pth'
-        ,
-        "sherpa-zipformer":
-        "csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06"
-        ,
+class ModelLabels(StrEnum):
+    ENGLISH_RECOGNIZER = "en-recognizer"
+    KOKORO = "kokoro"
+    KOKORO_V1 = "kokoro-v1"
+
+STREAMING_MODELS = [
+        ModelLabels.ENGLISH_RECOGNIZER
+        ]
+
+REMOTES = {
+        ModelLabels.KOKORO:
+        'hexgrad/Kokoro-82M',
+
+        ModelLabels.KOKORO_V1:
+        'hexgrad/Kokoro-82M-v1.1-zh',
+
+        ModelLabels.ENGLISH_RECOGNIZER:
+        "csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
         }
 
 ALIASES = {
@@ -53,6 +62,7 @@ class Voices(StrEnum):
     AF_HEART = "af_heart"
     AF_BELLA = "af_bella"
 
+
 class AppSpec(BaseModel):
     version: str
     org_name: str
@@ -63,50 +73,66 @@ class AppSpec(BaseModel):
     config_dir: Path
 
     config_file: Path
-
-
-class RuntimeSpec(BaseModel):
-    model_id: str
-    model_label: str | None = None
-    weights_file: Path | None = None
     use_model_dir: bool = True
 
-    def resolv_local_dir(self, app_spec: AppSpec):
+    @property
+    def models_dir(self) -> Path:
         if self.use_model_dir:
-            root = app_spec.data_dir / "models"
+            return self.data_dir / "models"
         else:
-            root = app_spec.data_dir
+            return self.data_dir
 
-        if self.model_label:
-            return root / self.model_label
-        else:
-            return root / self.model_id
 
-    # model_source: Literal[
-    #         "local",
-    #         "huggingface",
-    #         ] = "huggingface"
-    # voice_source: Literal[
-    #         "local",
-    #         "huggingface",
-    #         ] = "huggingface"
-    # token: str | None = None
-    # env_token_name: str | None = None
-    # discover_token: bool = True
 
-    # use_provider_config: bool = True
-    # raise_for_errors: bool = True
-    # auto_download: bool = True
-    # preload: bool = True
-    # verify: bool = True
-    # local_only: bool = False
-    # lazy_load: bool = False
-    # offline: bool = False
+class RepoSpec(BaseModel):
+    model_label: ModelLabels
+
+    @property
+    def modle_id(self) -> str:
+        return REMOTES[self.model_label]
+
+    @property
+    def model_dir_name(self) -> str:
+        return self.model_label
+
+    def local_dir(self, app: AppSpec) -> Path:
+        return app.models_dir / self.model_dir_name
+
+    @property
+    def is_a_streaming_model(self) -> bool:
+        return self.model_label in STREAMING_MODELS
+
+
+class KokoroRepo(RepoSpec):
+
+    WEIGHTS_FILES: dict = {
+            ModelLabels.KOKORO:
+            'kokoro-v1_0.pth',
+
+            ModelLabels.KOKORO_V1:
+            'kokoro-v1_1-zh.pth',
+            }
+
+    model_label: ModelLabels = ModelLabels.KOKORO
+    source_params_filename: str = "config.json"
+    params_filename: str = "speech_params.json"
+
+    @property
+    def weights_filename(self):
+        return self.WEIGHTS_FILES[self.model_label]
+
+
+class KrokoRepo(RepoSpec):
+    model_label: ModelLabels =  ModelLabels.ENGLISH_RECOGNIZER
+    model_type: str = RecognizerType.ZIPFORMER
+    onnx: bool = True
 
 
 _org_name = "pforg" 
 _app_name = "pfspeak"
+
 _platform_dirs = PlatformDirs(appname=_app_name, appauthor=_org_name)
+
 DEFAULT_APP_SPEC = AppSpec(
         version="handmaid",
         org_name=_org_name, 

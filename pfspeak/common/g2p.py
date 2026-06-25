@@ -4,7 +4,7 @@ from pathlib import Path
 from pfspeak.common.defaults import LANG_CODES, ALIASES
 from pfspeak.common.exceptions import LanguageNotImplemented, MisakiImportError
 
-from pfspeak.tts.specs import G2PSpec
+from pfspeak.core.params import G2PParams
 from pfspeak.common.dataclasses import PfToken, TokenList
 from pfspeak.common.just_checking import TypeMToken
 from typing import Callable, Iterable, List, TypeAlias
@@ -36,10 +36,12 @@ class Graphemes2Phonemes:
 
     def __init__(self) -> None:
         self._cached_backends = {}
+        self._en_callable: VoidableDef = None
+        self.load(G2PParams())
 
 
     def load(self,
-             spec: G2PSpec | None = None,
+             spec: G2PParams | None = None,
              trf: bool | None = None,
              version: str | None = None,
              default_lang: str | None = None,
@@ -47,8 +49,8 @@ class Graphemes2Phonemes:
              ) -> None:
         if spec:
             self.trf=spec.trf
-            self.version=spec.version
-            self.default_language=spec.default_lang
+            self.version=None
+            self.default_lang=spec.default_lang
             self.en_callable=en_callable
         if trf:
             self.trf = trf
