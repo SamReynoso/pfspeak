@@ -5,7 +5,7 @@ import re
 
 
 from pfspeak.services import pfconfig, commandline_args
-from pfspeak.tts.runtime import TextToSpeech
+from pfspeak import TextToSpeech
 
 PATH_RE = re.compile(r'(~|/)\S+')
 
@@ -17,7 +17,7 @@ def serve() -> int:
         sys.stderr.write("Could not get file descriptor\n")
         sys.exit(17)
 
-    runtime = TextToSpeech()
+    tts = TextToSpeech()
 
     with open(fd, 'r') as fifo:
 
@@ -104,8 +104,7 @@ def serve() -> int:
 
                 # Generate audio from text the queue 
                 if queue and should_work:
-                    buffer.append(
-                            runtime.speak(
+                            tts.speak(
                                 PATH_RE.sub("path like", '\n'.join(queue)),
                                 pfconfig.voice,
                                 speed=pfconfig.speech_speed

@@ -1,28 +1,30 @@
 import json
 from pathlib import Path
 from .params import ListenParams, SpeechParams
-from pfspeak.core.tts.inference import SpeechModel
-from pfspeak.common.defaults import AppSpec, KokoroRepo, KrokoRepo
 from pfspeak.common.just_checking import TypeRecognizer
+from pfspeak.common.defaults import AppSpec, KokoroRepo, KrokoRepo
 
 
 class SpeechRepo(KokoroRepo):
 
     @staticmethod
-    def voice_weights_filename(voice_label: str) -> str:
+    def voice_filename(voice_label: str) -> str:
         return f"voices/{voice_label}.pt"
 
     @staticmethod
     def to_params(params_file: Path) -> SpeechParams:
         return SpeechParams(**json.loads(params_file.read_text()))
 
-    def to_inference_model(self, app: AppSpec) -> SpeechModel:
-        params_file =  self.local_dir(app) / self.params_filename
-        return SpeechModel(self.to_params(params_file))
-
 class RecognizerRepo(KrokoRepo):
 
     tokens: str= "tokens.txt"
+
+    MANIFEST: list[str] = [
+            "tokens.txt",
+            "encoder.onnx",
+            "decoder.onnx",
+            "joiner.onnx",
+            ]
 
     @property
     def postfix(self) -> str:

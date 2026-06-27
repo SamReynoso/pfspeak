@@ -12,13 +12,27 @@ from pfspeak.core.tts.inference import SpeechModel
 from pfspeak.common.just_checking import TypeRecognizer
 
 
-def inference_model_params(app: AppSpec, repo: SpeechRepo):
-    params_file = app.models_dir / repo.params_filename
-    return SpeechParams(**json.loads(params_file.read_text()))
-
-
 def inference_model(app: AppSpec, repo: SpeechRepo):
-    return SpeechModel(inference_model_params(app, repo))
+    local_dir = app.models_dir / repo.model_dir_name 
+
+    def inference_model_params():
+        params_file = local_dir / repo.params_filename
+        return SpeechParams(**json.loads(params_file.read_text()))
+
+    def find_voice_weights(voice_label: str):
+        return local_dir /  repo.voice_filename(voice_label)
+
+    def load_inference_weights(torch, map_location):
+        weights_file = local_dir / repo.weights_filename
+        return torch.load(weights_file,
+                          map_location=map_location,
+                          weights_only=True)
+
+    return SpeechModel(
+            inference_model_params,
+            find_voice_weights,
+            load_inference_weights,
+            )
 
 
 def recognizer(app: AppSpec,
@@ -69,7 +83,7 @@ def install_model(app_spec: AppSpec, runtime_spec):
 
         kwargs = {
                 'cache_dir': app_spec.cache_dir,
-                'local_dir': app_spec.local_dir / runtime_spec.model_dir_name,
+                'local_dir': app_spec.models_dir / runtime_spec.model_dir_name,
                 'token': resolve_hf_token(),
                 }
 

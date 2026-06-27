@@ -25,12 +25,10 @@ class AudioSource(ABC):
 
 
     @abstractmethod
-    def audio_adaptor(self, *args, **kwargs):
-        ...
+    def audio_adaptor(self, *args, **kwargs): ...
 
     @abstractmethod
-    def prepare(self):
-        ...
+    def prepare(self): ...
 
     def start(self):
         self.prepare()

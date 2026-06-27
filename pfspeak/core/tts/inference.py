@@ -1,35 +1,43 @@
 import sys
 from pathlib import Path
-
-
-from pfspeak.core.params import SpeechParams
-from pfspeak.extra.decorators import architecture_initialized, torch_imported
-
+from types import ModuleType
 from pfspeak.common.just_checking import (
         TypeArchitecture,
         NDArray,
         Float32,
         TypeTensor
         )
-
+from pfspeak.core.params import SpeechParams
 from pfspeak.common.dataclasses import Output
+from typing import Any, Callable, Dict, Literal
 from pfspeak.common.dataclasses import CudaSupport
-from typing import Any, Dict, Literal
-from types import ModuleType
+from pfspeak.extra.decorators import architecture_initialized, torch_imported
+
+
+WeightsLoader = Callable[..., Any]
+VoiceFinder = Callable[[str], Path]
+ParamLoader = Callable[..., SpeechParams]
 
 
 class SpeechModel:
-    def __init__(self, paramaters: SpeechParams | None = None):
-        self.params = paramaters
-        self.device: Literal["cpu", "cuda", "mps"] | None = None
-        self.arch: TypeArchitecture | None = None
+    def __init__(self,
+                 params_loader: ParamLoader,
+                 voice_finder: VoiceFinder,
+                 weights_loader: WeightsLoader,
+                 ) -> None:
+        self.params = params_loader()
+
+        self.voice_finder = voice_finder
+        self.weights_loader = weights_loader
+        self.loaded: bool = False
+
         self.torch: ModuleType | None = None
-        self.weigth_loaded: bool = False
+        self.arch: TypeArchitecture | None = None
         self.voices: Dict[Path, TypeTensor] = {}
+        self.device: Literal["cpu", "cuda", "mps"] | None = None
 
-
-    def load_model(self, weight_file: Path, maps_location: str) -> None:
-        self.load_weights(weight_file, maps_location)
+    def load_model(self) -> None:
+        self.load_weights()
         self.to_device()
         self.to_inference_mode()
 
@@ -49,11 +57,9 @@ class SpeechModel:
         return self.arch.eval()
 
     @architecture_initialized
-    def load_weights(self, weights_file: Path, map_location: str) -> None:
+    def load_weights(self) -> None:
         assert self.params and self.torch
-        loaded = self.torch.load(weights_file,
-                                 map_location=map_location,
-                                 weights_only=True)
+        loaded =  self.weights_loader(self.torch, "cpu")
         for key, state_dict in loaded.items():
             assert hasattr(self.arch, key), key
             try:
@@ -66,13 +72,14 @@ class SpeechModel:
         self.weigth_loaded = True
 
     @torch_imported
-    def load_voice(self, voice_path: Path) -> TypeTensor:
+    def load_voice(self, voice_label: str) -> TypeTensor:
         assert self.torch
+        voice_path = self.voice_finder(voice_label)
         if voice_path in self.voices:
             return self.voices[voice_path]
-        voice = self.torch.load(voice_path, weights_only=True)
+        voice_weight = self.torch.load(voice_path, weights_only=True)
         if self.device:
-            self.voices[voice_path] = voice.to(self.device)
+            self.voices[voice_path] = voice_weight.to(self.device)
         else:
             raise RuntimeError(
             "Attempting to load voice tensor before specifying a target device"

@@ -1,10 +1,10 @@
 # https://github.com/yl4579/StyleTTS2/blob/main/models.py
-from .istftnet import AdainResBlk1d
-from torch.nn.utils.parametrizations import weight_norm
-from transformers import AlbertModel
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .istftnet import AdainResBlk1d
+from transformers import AlbertModel
+from torch.nn.utils.parametrizations import weight_norm
 
 
 class LinearNorm(nn.Module):

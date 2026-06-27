@@ -122,16 +122,9 @@ class Graphemes2Phonemes:
     def __call__(self,
                  text: str,
                  lang: str | None = None,
-                 voice_label: str | None = None,
-                 voice_path: Path | None = None,
                  ):
         code = lang 
         if not code:
-            if voice_label:
-                code = infer_lang_code_from_voice_label(voice_label)
-            elif voice_path:
-                code = infer_lang_code_from_voice_path(voice_path)
-            else:
                 code = self.default_lang
         assert code is not None, "code was none but should have been some"
         if code in ("a", "b"):

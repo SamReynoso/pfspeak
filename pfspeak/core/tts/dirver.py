@@ -1,9 +1,13 @@
-from pfspeak.common import Output, Result, TokenList
-from pfspeak.common.just_checking import TypeTensor 
+from pfspeak.common import Output, Result, TokenList, models
+from pfspeak.common.dataclasses import PipelineCmds
+from pfspeak.common.defaults import AppSpec
+from pfspeak.common.just_checking import TypeTensor
+from pfspeak.core.repos import SpeechRepo 
 
 from .inference import SpeechModel
 
 from typing import Callable, Generator, List, Union
+from multiprocessing.connection import Connection
 
 
 class Driver:
@@ -18,10 +22,10 @@ class Driver:
     @staticmethod
     def generate_from_tokens(tokens: TokenList,
                              model: SpeechModel,
-                             voice: TypeTensor,
+                             voice: str,
                              speed: float = 1,
                              ) -> Generator[Result]:
-        pack = voice.to(model.device)
+        pack = model.load_voice(voice)
         for ts in Driver.chunks(tokens):
             output = Driver.infer(model, ts.phonemes, pack, speed)
             result = Result(
@@ -89,3 +93,19 @@ class Driver:
             phoneme_count += token_size
         if processed:
             yield processed
+
+
+    @staticmethod
+    def worker(app: AppSpec, repo: SpeechRepo, conn: Connection):
+        model = models.inference_model(app, repo)
+        model.load_model()
+        while True:
+            cmd: PipelineCmds | bool = conn.recv()
+            if cmd is False or cmd is True:
+                return
+            for ret in Driver.generate_from_tokens(cmd.tokens,
+                                                   model,
+                                                   cmd.voice,
+                                                   cmd.speed):
+                conn.send(ret)
+            conn.send(False)

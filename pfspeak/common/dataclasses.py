@@ -27,11 +27,9 @@ class CudaSupport:
 @dataclass
 class PipelineCmds:
     op: Literal["stop", "speak"]
-    text: str
-    voice: Path
-    lang: Optional[str] = None
+    tokens: TokenList
+    voice: str
     speed: float = 1 
-
 
 
 @dataclass

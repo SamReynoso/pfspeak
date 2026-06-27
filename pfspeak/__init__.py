@@ -1,5 +1,9 @@
-from pfspeak.core.core import PfSpeak
+from pfspeak.core.core import PfSpeak, SpeechToText, TextToSpeech
+from pfspeak.extra.assets import AssetManager
 
 __all__ = [
-        "PfSpeak"
+        "PfSpeak",
+        "SpeechToText",
+        "TextToSpeech",
+        "AssetManager",
         ]

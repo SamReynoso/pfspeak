@@ -1,9 +1,9 @@
-from pfspeak.tts.custom_stft import CustomSTFT
-from torch.nn.utils.parametrizations import weight_norm
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .custom_stft import CustomSTFT
+from torch.nn.utils.parametrizations import weight_norm
 
 
 def init_weights(m, mean=0.0, std=0.01):

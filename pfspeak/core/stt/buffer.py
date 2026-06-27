@@ -1,9 +1,8 @@
 from threading import Lock
-from pfspeak.common.dataclasses import Audio, Recording
-from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.core.stt.stream import AudioChunk
+from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.common.just_checking import TypeRecognizer
-
+from pfspeak.common.dataclasses import Audio, Recording
 
 
 class ListenBuffer:
@@ -19,7 +18,7 @@ class ListenBuffer:
 
         self.recording = Recording()
         self.stream_lock = Lock()
-        self._lookback: Audio = []
+        self._lookback: Audio = Audio()
 
     def get(self) -> Recording:
         return self.recording
@@ -45,7 +44,7 @@ class ListenBuffer:
 
         def n_lookback_blocks() -> Audio:
             if self.LOOKBACH_BLOCKS < len(self._lookback):
-                return self._lookback[-self.LOOKBACH_BLOCKS:]
+                return Audio(self._lookback[-self.LOOKBACH_BLOCKS:])
             else:
                 return self._lookback
 
@@ -62,6 +61,6 @@ class ListenBuffer:
             if text and  self.recording.text != text:
                 tokens = self.g2p(text)
                 self.recording.revise(tokens, n_lookback_blocks())
-                self._lookback = []
+                self._lookback = Audio()
 
         return callback

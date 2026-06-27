@@ -60,7 +60,7 @@ LANG_CODES = dict(
 
 class Voices(StrEnum):
     AF_HEART = "af_heart"
-    AF_BELLA = "af_bella"
+    BR_LILYA = "bf_lily.pt"
 
 
 class AppSpec(BaseModel):
@@ -75,6 +75,7 @@ class AppSpec(BaseModel):
     config_file: Path
     use_model_dir: bool = True
 
+
     @property
     def models_dir(self) -> Path:
         if self.use_model_dir:
@@ -86,6 +87,7 @@ class AppSpec(BaseModel):
 
 class RepoSpec(BaseModel):
     model_label: ModelLabels
+    model_id: str
 
     @property
     def modle_id(self) -> str:
@@ -95,15 +97,17 @@ class RepoSpec(BaseModel):
     def model_dir_name(self) -> str:
         return self.model_label
 
-    def local_dir(self, app: AppSpec) -> Path:
-        return app.models_dir / self.model_dir_name
-
     @property
     def is_a_streaming_model(self) -> bool:
         return self.model_label in STREAMING_MODELS
 
 
 class KokoroRepo(RepoSpec):
+
+    model_label: ModelLabels = ModelLabels.KOKORO
+    model_id: str = REMOTES[model_label]
+    source_params_filename: str = "config.json"
+    params_filename: str = "params.json"
 
     WEIGHTS_FILES: dict = {
             ModelLabels.KOKORO:
@@ -113,9 +117,10 @@ class KokoroRepo(RepoSpec):
             'kokoro-v1_1-zh.pth',
             }
 
-    model_label: ModelLabels = ModelLabels.KOKORO
-    source_params_filename: str = "config.json"
-    params_filename: str = "speech_params.json"
+    MANIFEST: list[str] = [
+            WEIGHTS_FILES[model_label],
+            "config.json"
+            ]
 
     @property
     def weights_filename(self):
@@ -123,7 +128,10 @@ class KokoroRepo(RepoSpec):
 
 
 class KrokoRepo(RepoSpec):
+
+    MANIFEST: list[str] = []
     model_label: ModelLabels =  ModelLabels.ENGLISH_RECOGNIZER
+    model_id: str = REMOTES[model_label]
     model_type: str = RecognizerType.ZIPFORMER
     onnx: bool = True
 

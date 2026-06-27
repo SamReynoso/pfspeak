@@ -1,23 +1,21 @@
 import torch
-from torch.nn import Module
-from transformers import AlbertConfig
-
-from pfspeak.tts.modules import CustomAlbert, ProsodyPredictor, TextEncoder
-from pfspeak.tts.istftnet import Decoder
-from pfspeak.tts.specs import ModelParams
-from pfspeak.common.dataclasses import Output
-
-from typing import Tuple, Union
 from torch import Tensor
+from torch.nn import Module
+from .istftnet import Decoder
+from typing import Tuple, Union
+from transformers import AlbertConfig
+from pfspeak.core.params import SpeechParams
+from pfspeak.common.dataclasses import Output
+from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
 
 
 class KokoroArchitecture(Module):
-    def __init__( self, params: ModelParams):
+    def __init__( self, params: SpeechParams):
 
         super().__init__()
 
         self.map_location = params.map_location
-        self.weights_only = params.weights_only
+        self.weights_only = True
 
         self.vocab = params.vocab
         self.bert = CustomAlbert(
