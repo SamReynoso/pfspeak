@@ -3,10 +3,10 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 from abc import ABC, abstractmethod
-from pfspeak.core.params import SpeechParams
+from pfspeak.core.param import SpeechParams
 from pfspeak.common.just_checking import TypeTensor
 from pfspeak.common.defaults import AppSpec, RepoSpec
-from pfspeak.core.repos import RecognizerRepo, SpeechRepo
+from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from huggingface_hub import hf_hub_download, snapshot_download
 
 
@@ -190,7 +190,7 @@ class RecognizerAsset(Asset):
             sample_rate=params.samplerate,
             feature_dim=params.feature_dim,
             **kwargs,
-        )
+            )
 
     @classmethod
     def download(cls, app: AppSpec, repo: RecognizerRepo, *_):

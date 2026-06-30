@@ -1,12 +1,8 @@
-
-from functools import singledispatch
-from itertools import groupby
 from typing import Any
+from itertools import groupby
+from functools import singledispatch
 from numpy import concatenate as npcat
-
 from pfspeak.common.dataclasses import Audio, AudioChunk, Recording
-
-Recordings = Recording | list[Recording]
 
 
 @singledispatch
@@ -66,7 +62,6 @@ def _(recording: Recording, *, dim: int = 0):
                     )
         case _:
             raise ValueError(f"Unsupported dim={dim}")
-            ...
 
 
 @concatenate.register

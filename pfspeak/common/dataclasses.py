@@ -1,4 +1,7 @@
+from __future__ import annotations
+from uuid import UUID
 from enum import StrEnum
+from numpy import array, float32
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pfspeak.common.defaults import Voices
@@ -6,41 +9,10 @@ from typing import Callable, Iterable, Literal, overload
 from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
 
-@dataclass
+@dataclass(slots=True)
 class PfStatus:
     sent: int = 0
     received: int = 0
-
-
-@dataclass
-class PfEvent:
-
-    class Service(StrEnum):
-        TTS = "tts"
-        STT = "stt"
-
-    service: Service
-    status: PfStatus
-    recording: Recording | None
-    _finalize_self: Callable | None= None
-
-    def finalize(self):
-        if self.service != PfEvent.Service.STT:
-            raise RuntimeError("Finalize method not available for TTS events")
-        elif self._finalize_self is None:
-            raise ValueError("Finalize method was not by STT session buffer.")
-        else:
-            print("finalizing")
-            self._finalize_self(self)
-
-    def __repr__(self):
-        return (
-                f"PfEvent(service={self.service}, "
-                f"status.sent={self.status.sent}, "
-                f"status.received={self.status.received}, "
-                f"recording={len(self.recording.text) if self.recording else 0}"
-                ")"
-                )
 
 
 @dataclass(frozen=True)
@@ -49,9 +21,93 @@ class CudaSupport:
     supported: bool
 
 
-@dataclass
-class WorkerMessage:
+@dataclass(slots=True)
+class PfEvent:
+
+    class Types(StrEnum):
+        TTS = "tts"
+        STT = "stt"
+
+    device_id: UUID
+    service: Types
+    status: PfStatus
+    recording: Recording | None
+    _finalize_self: Callable | None= None
+
+    def finalize(self):
+        if self.service != PfEvent.Types.STT:
+            raise RuntimeError("Finalize method not available for TTS events")
+        elif self._finalize_self is None:
+            raise ValueError("Finalize method was not by STT session buffer.")
+        else:
+            self._finalize_self(self)
+
+    @property
+    def types(self):
+        return self.Types
+
+
+    def __repr__(self):
+        return (f"PfEvent(service={self.service}, "
+                f"status.sent={self.status.sent}, "
+                f"status.received={self.status.received}, "
+                f"recording={len(self.recording.text) if self.recording else 0}"
+                ")")
+
+
+@dataclass(slots=True)
+class WorkRequest:
+    device_id: UUID
+    text: str 
+    voice: Voices | str | None = None
+    speed: float = 1 
+
+    def __repr__(self) -> str:
+        voice = f"'{self.voice}'" if self.voice else None
+        return ("WorkerRequest(, "
+                f"text={len(self.text)}, "
+                f"voice={voice}, "
+                f"speed={self.speed})"
+                )
+
+    def make(self,
+             tokens: TokenList,
+             voice: Voices | str | None = None,
+             *,
+             speed: float | None = None
+             ) -> WorkerMessage:
+        if voice is None:
+            if self.voice is None:
+                raise ValueError("No voice proviced in WorkRequest")
+            voice = self.voice
+        if speed is None:
+            speed = self.speed
+        return WorkerMessage(
+                device_id=self.device_id,
+                op="speak",
+                tokens=tokens,
+                voice=voice,
+                speed=speed)
+
+    def event(self, status: PfStatus) -> PfEvent:
+        return PfEvent(device_id=self.device_id,
+                       service=PfEvent.Types.TTS,
+                       status=status,
+                       recording=None)
+
+@dataclass(slots=True)
+class WorkerMessageBase:
     op: Literal["stop", "speak"]
+
+
+@dataclass(slots=True)
+class Centinal(WorkerMessageBase):
+    op: Literal["stop", "speak"] = "stop"
+
+
+@dataclass(slots=True)
+class WorkerMessage(WorkerMessageBase):
+    device_id: UUID
     tokens: TokenList
     voice: Voices | str
     speed: float = 1 
@@ -63,8 +119,16 @@ class WorkerMessage:
                 f"speed={self.speed})"
                 )
 
+    def event(self, status: PfStatus) -> PfEvent:
+        return PfEvent(
+                service=PfEvent.Types.TTS,
+                device_id=self.device_id,
+                recording=None,
+                status=status,
+                )
 
-@dataclass
+
+@dataclass(slots=True)
 class PfToken:
     phonemes: str | None
     whitespace: str
@@ -146,7 +210,7 @@ class TokenList:
         return list(self) == list(value)
 
     def __len__(self) -> int:
-       """
+        """
         RETURN THE TOTAL PHONEME LENGTH, NOT THE NUMBER OF TOKENS.
 
         This makes phoneme-budgeted algorithms read naturally.
@@ -184,8 +248,9 @@ class TokenList:
         return f"TokenList(len={len(self)}, count={self.count}, text='{text}')"
 
 
-@dataclass
+@dataclass(slots=True)
 class AudioChunk:
+    device_id: UUID
     waveform: NDArray[Float32]
     samplerate: int
     start_time: float
@@ -201,6 +266,31 @@ class AudioChunk:
     def __repr__(self) -> str:
         return (f"AudioChunk(start_time={self.start_time}, "
                 f"duration={self.duration})")
+
+@dataclass(slots=True)
+class Prediction:
+    device_id: UUID
+    tokens: TokenList
+    audio: TypeTensor
+    pred_dur: TypeTensor
+
+    def event(self, status: PfStatus) -> PfEvent:
+        apply_prediction_duration_timestamps(self.tokens,
+                                             self.pred_dur)
+        return PfEvent(
+                status=status,
+                device_id=self.device_id,
+                service=PfEvent.Types.TTS,
+                recording=Prediction.recording(self))
+
+    @staticmethod
+    def recording(prediction):
+        waveform = array(prediction.audio).astype(float32)
+        chunk = AudioChunk(device_id=prediction.device_id,
+                           waveform=waveform,
+                           samplerate=24_000,
+                           start_time=0)
+        return Recording(tokens=prediction.tokens, audio=Audio([chunk])) 
 
 
 class Audio(list[AudioChunk]):
@@ -283,9 +373,6 @@ class Recording:
 
     def apply_timestamp(self):
 
-        if self.created is None:
-            self.created = self.audio[0].start_time
-
         new_audio = self.audio[len(self.ledger):]
 
         pending = [t for t in self.tokens if t.start_time is None]
@@ -341,7 +428,6 @@ class Recording:
                     merged.extend(new[j1:j2])
                 case "delete":
                     pass
-                    raise RuntimeError("aborted")
         self.tokens = TokenList(merged)
 
     def __add__(self, other: Recording) -> Recording:

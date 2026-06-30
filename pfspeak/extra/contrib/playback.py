@@ -7,8 +7,8 @@ def typewriter(tokens: TokenList):
     start = monotonic()
 
     for token in tokens:
-        assert token.start_ts
-        while monotonic() - start < token.start_ts:
+        assert token.start_time
+        while monotonic() - start < token.start_time:
             sleep(.005)
         yield token.text + token.whitespace
 

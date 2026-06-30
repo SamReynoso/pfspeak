@@ -1,19 +1,19 @@
 from enum import StrEnum
 from pathlib import Path
-
+from dataclasses import dataclass
 from platformdirs import PlatformDirs
-from pydantic import BaseModel
 
-from pfspeak.core.params import RecognizerType
 
 class ModelLabels(StrEnum):
     ENGLISH_RECOGNIZER = "en-recognizer"
     KOKORO = "kokoro"
     KOKORO_V1 = "kokoro-v1"
 
+
 STREAMING_MODELS = [
         ModelLabels.ENGLISH_RECOGNIZER
         ]
+
 
 REMOTES = {
         ModelLabels.KOKORO:
@@ -26,6 +26,8 @@ REMOTES = {
         "csukuangfj/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
         }
 
+IPC_AUTHKEY = b"pfspeak"
+
 ALIASES = {
         'en-us': 'a',
         'en-gb': 'b',
@@ -37,6 +39,7 @@ ALIASES = {
         'ja': 'j',
         'zh': 'z',
         }
+
 
 LANG_CODES = dict(
         # pip install misaki[en]
@@ -61,11 +64,14 @@ LANG_CODES = dict(
 class Voices(StrEnum):
     AF_HEART = "af_heart"
     BR_LILYA = "bf_lily.pt"
+    # TODO: Add the rest of the voices
 
     def __repr__(self) -> str:
         return f"Voice({self.value})"
 
-class AppSpec(BaseModel):
+
+@dataclass(slots=True)
+class AppSpec:
     version: str
     org_name: str
     app_name: str
@@ -77,7 +83,6 @@ class AppSpec(BaseModel):
     config_file: Path
     use_model_dir: bool = True
 
-
     @property
     def models_dir(self) -> Path:
         if self.use_model_dir:
@@ -86,8 +91,7 @@ class AppSpec(BaseModel):
             return self.data_dir
 
 
-
-class RepoSpec(BaseModel):
+class RepoSpec:
     model_label: ModelLabels
     model_id: str
     MANIFEST: list[str]
@@ -105,43 +109,6 @@ class RepoSpec(BaseModel):
         return self.model_label in STREAMING_MODELS
 
 
-class KokoroRepo(RepoSpec):
-
-    model_label: ModelLabels = ModelLabels.KOKORO
-    model_id: str = REMOTES[model_label]
-    source_params_filename: str = "config.json"
-    params_filename: str = "params.json"
-
-    WEIGHTS_FILES: dict = {
-            ModelLabels.KOKORO:
-            'kokoro-v1_0.pth',
-
-            ModelLabels.KOKORO_V1:
-            'kokoro-v1_1-zh.pth',
-            }
-
-    MANIFEST: list[str] = [
-            WEIGHTS_FILES[model_label],
-            "config.json"
-            ]
-
-    @property
-    def weights_filename(self):
-        return self.WEIGHTS_FILES[self.model_label]
-
-    @staticmethod
-    def voice_filename(voice_label: str) -> str:
-        return f"voices/{voice_label}.pt"
-
-
-class KrokoRepo(RepoSpec):
-
-    model_label: ModelLabels =  ModelLabels.ENGLISH_RECOGNIZER
-    model_id: str = REMOTES[model_label]
-    model_type: str = RecognizerType.ZIPFORMER
-    onnx: bool = True
-
-
 _org_name = "pforg" 
 _app_name = "pfspeak"
 
@@ -157,4 +124,3 @@ DEFAULT_APP_SPEC = AppSpec(
         config_dir=Path(_platform_dirs.user_config_dir),
         config_file=Path(_platform_dirs.user_config_dir) / f"{_app_name}.toml",
         )
-

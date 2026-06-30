@@ -1,17 +1,16 @@
 
 import sounddevice as sd
 
-from pfspeak import TextToSpeech
-from pfspeak.core.sources import Fifo
-
+from pfspeak.core.core import PfSpeak
+from pfspeak.core.devices import Fifo
 
 
 def start_stream():
-    tts = TextToSpeech()
-    fifo = Fifo("./text.pipe")
+    pf = PfSpeak()
+    fifo = Fifo("./input.pipe")
 
-    with tts.streaming(fifo) as session:
-        for event in session.new():
+    with pf.streaming(fifo) as session:
+        for event in session:
             if event.recording:
                 sd.play(event.recording.to_waveform(),
                         samplerate=24_000)

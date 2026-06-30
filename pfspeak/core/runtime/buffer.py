@@ -34,7 +34,7 @@ class ListenBuffer:
     def unduck(self):
         self.__ducked = False
 
-    def rest_stream(self):
+    def reset_stream(self):
         with self.stream_lock:
             self.recording = Recording()
             self.__create_stream()
@@ -46,9 +46,10 @@ class ListenBuffer:
             assert self.add_event
             self.add_event(
                     PfEvent(
-                        service=PfEvent.Service.STT,
-                        status=self.status,
+                        device_id=self.recording.audio[0].device_id,
+                        service=PfEvent.Types.STT,
                         recording=self.recording,
+                        status=self.status,
                         )
                     )
 
@@ -83,3 +84,6 @@ class ListenBuffer:
                 self.recording_updated()
 
         return callback
+
+    def stop(self):
+        self.stream.close()

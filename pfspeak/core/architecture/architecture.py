@@ -4,7 +4,7 @@ from typing import Tuple
 from torch.nn import Module
 from .istftnet import Decoder
 from transformers import AlbertConfig
-from pfspeak.core.params import SpeechParams
+from pfspeak.core.param import SpeechParams
 from pfspeak.common.types import AudioPrediction
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
 from pfspeak.common.exceptions import ContextLengthExceeded, UnknownPhonemeError

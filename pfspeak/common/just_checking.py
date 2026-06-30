@@ -11,14 +11,13 @@ from typing import TYPE_CHECKING, Iterable, TypeAlias, Any
 """
 
 if TYPE_CHECKING:
-    from misaki.en import MToken as TypeMToken
-    from pfspeak.core.tts.kokoro.architecture import KokoroArchitecture as TypeArchitecture
-
-    from sherpa_onnx import OnlineRecognizer as TypeRecognizer
-
-    from torch import Tensor as TypeTensor
-    from numpy import float32 as Float32
     from numpy.typing import NDArray
+    from numpy import float32 as Float32
+    from torch import Tensor as TypeTensor
+    from misaki.en import MToken as TypeMToken
+    from sherpa_onnx import OnlineRecognizer as TypeRecognizer
+    from pfspeak.core.architecture.architecture import KokoroArchitecture as TypeArchitecture
+
 
 else:
     TypeMToken: TypeAlias = Any
@@ -39,5 +38,3 @@ __all__ = [
         "TypeMToken",
         "TypeRecognizer",
         ]
-
-

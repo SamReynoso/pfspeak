@@ -1,23 +1,18 @@
 import sys
 from types import ModuleType
-from pfspeak.common.models import (
+from typing import Dict, Literal
+from pfspeak.core.asset import (
         SpeechWeights,
         SpeechVoiceAsset,
         SpeechParamsAsset
         )
-from pfspeak.core.repos import SpeechRepo
+from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.defaults import AppSpec
-from pfspeak.core.params import SpeechParams
-from typing import Any, Callable, Dict, Literal
 from pfspeak.common.types import AudioPrediction
 from pfspeak.common.dataclasses import CudaSupport
 from pfspeak.common.exceptions import ArchitectureNotInitializeError
 from pfspeak.common.just_checking import TypeArchitecture, TypeTensor
 from pfspeak.extra.decorators import architecture_initialized, torch_imported
-
-
-WeightsLoader = Callable[..., Any]
-ParamLoader = Callable[..., SpeechParams]
 
 
 class SpeechModel:
@@ -65,8 +60,6 @@ class SpeechModel:
         assert self.params and self.torch
         loaded =  SpeechWeights.load(self.app, self.repo, self.torch, "cpu")
         for key, state_dict in loaded.items():
-            # TODO: waiting to see if this to happen 6-28-2026 16:44:22
-            assert hasattr(self.arch, key), key
             try:
                 getattr(self.arch, key).load_state_dict(state_dict)
             except Exception:

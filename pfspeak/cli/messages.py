@@ -1,5 +1,5 @@
-from pfspeak.services import pfconfig
-from pfspeak.common import DEFAULT_APP_SPEC as default
+from pfspeak.app import pfconfig
+from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
 from pfspeak.tts.runtime import TextToSpeech
 from pfspeak.tts.specs import SpeechSpec
 
@@ -242,7 +242,3 @@ Environment:
 See also:
     pflogger help
 """
-
-if __name__ == "__main__":
-    for key, message in Q:
-        print(f"{key}: {message}\n")

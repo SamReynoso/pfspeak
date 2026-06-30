@@ -104,12 +104,7 @@ def serve() -> int:
 
                 # Generate audio from text the queue 
                 if queue and should_work:
-                            tts.speak(
-                                PATH_RE.sub("path like", '\n'.join(queue)),
-                                pfconfig.voice,
-                                speed=pfconfig.speech_speed
-                                ).waveform
-                            )
+                    tts.speak(queue, pfconfig.voice, speed=pfconfig.speech_speed).waveform()
                     queue = []
                     size = 0
 

@@ -1,4 +1,5 @@
 
+
 class MisakiImportError(ImportError):
     def __init__(self,
                  *args: object,
@@ -17,6 +18,7 @@ class MisakiImportError(ImportError):
             self.message = args[0]
         super().__init__( *args, name=name, path=path)
 
+
 class LanguageNotImplemented(NotImplementedError):
     def __init__(self, *args: object, lang_code: str = 'unknown') -> None:
         self.lang_code = lang_code
@@ -30,8 +32,11 @@ class LanguageNotImplemented(NotImplementedError):
         super().__init__(*args)
 
 
+
 class ContextLengthExceeded(ValueError): ...
 
+
 class UnknownPhonemeError(ValueError): ...
+
 
 class ArchitectureNotInitializeError(RuntimeError): ...

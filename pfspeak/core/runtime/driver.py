@@ -1,16 +1,9 @@
-from pathlib import Path
-
-from pfspeak.common import models
 from .inference import SpeechModel
 from collections.abc import Generator
 from pfspeak.common.dataclasses import (
         PfToken,
-        WorkerMessage,
         TokenList,
         )
-from pfspeak.core.repos import SpeechRepo 
-from pfspeak.common.defaults import AppSpec
-from multiprocessing.connection import Connection
 from pfspeak.common.types import AudioPrediction, Prediction
 
 
@@ -66,34 +59,27 @@ class Driver:
         This one simply falls back to the last punctuation mark before the
         limit, otherwise it splits at the limit.
         """
+
         while len(tokens) > max_size:
 
             last_split_point = 0
+            current = 0
 
-            for i in range(tokens.count - 1):
+            for i , token in enumerate(tokens[:-1]):
 
-                token = tokens[i]
 
-                if Driver.is_split_point(token):
-                    last_split_point = i
-
-                if len(tokens[:i])> max_size:
+                if current + len(token) > max_size:
                     split_at = last_split_point or i
                     yield tokens[:split_at]
                     tokens = tokens[split_at:]
-
+                    current = 0
                     break
 
-        yield tokens
+                current += len(token)
 
-    @staticmethod
-    def worker(app: AppSpec, repo: SpeechRepo, conn: Connection):
-        model = SpeechModel(app, repo)
-        model.load_model()
-        while True:
-            msg: WorkerMessage = conn.recv()
-            for audio_prediction in Driver.generate_from_tokens(msg.tokens,
-                                                                model,
-                                                                msg.voice,
-                                                                msg.speed):
-                conn.send(audio_prediction)
+                if Driver.is_split_point(token):
+                    last_split_point = i + 1
+                    print(f"'{token.phonemes}'")
+
+
+        yield tokens

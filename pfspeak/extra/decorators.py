@@ -1,23 +1,23 @@
-from functools import wraps
-from pathlib import Path
 from typing import Callable
+from functools import wraps
 
 
 def architecture_initialized(fn):
     @wraps(fn)
     def wrapper(self, *args, **kwargs):
+        from pfspeak.core.architecture.architecture import KokoroArchitecture
+        import torch
         if self.arch is None:
             if self.params is None:
                 raise RuntimeError(
                         "Attemting to initiate Architecture without module "
                         "parameters"
                         )
-            from pfspeak.core.tts.kokoro.architecture import KokoroArchitecture
-            import torch
             self.arch = KokoroArchitecture(self.params)
             self.torch = torch
         return fn(self, *args, **kwargs)
     return wrapper
+
 
 def torch_imported(fn):
     @wraps(fn)
@@ -36,14 +36,4 @@ def start_on_call(fn: Callable):
             self.pipeline.start(self.model_params, self.g2p_kwargs)
             self._pipeline_started = True
         return fn(self, *args, **kwargs)
-    return decorator
-
-type PolicyFollower = Callable[..., tuple[Callable, Path, Callable]]
-
-def follow_app_policy(fn: PolicyFollower):
-    def decorator(app, repo, *args):
-        excecute, file, installer = fn(app, repo, *args)
-        if not file.exists():
-            installer()
-        return excecute(app, repo, *args)
     return decorator

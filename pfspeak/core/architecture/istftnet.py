@@ -273,7 +273,7 @@ class SineGen(nn.Module):
         output sine_tensor: tensor(batchsize=1, length, dim)
         output uv: tensor(batchsize=1, length, 1)
         """
-        f0_buf = torch.zeros(f0.shape[0],
+        _ = torch.zeros(f0.shape[0],
                              f0.shape[1],
                              self.dim,
                              device=f0.device)

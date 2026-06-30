@@ -1,7 +1,5 @@
-from dataclasses import dataclass
-
 import requests
-
+from dataclasses import dataclass
 
 
 @dataclass
@@ -30,4 +28,3 @@ class OllamaRequest:
                     },
                 stream=self.stream,
                 )
-
