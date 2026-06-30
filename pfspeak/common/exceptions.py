@@ -28,3 +28,10 @@ class LanguageNotImplemented(NotImplementedError):
         else:
             self.message = args[0]
         super().__init__(*args)
+
+
+class ContextLengthExceeded(ValueError): ...
+
+class UnknownPhonemeError(ValueError): ...
+
+class ArchitectureNotInitializeError(RuntimeError): ...

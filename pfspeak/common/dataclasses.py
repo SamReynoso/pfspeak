@@ -1,21 +1,46 @@
-from time import time
-
-from pathlib import Path
-from itertools import groupby
+from enum import StrEnum
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from dataclasses import dataclass
-from pfspeak.common.just_checking import TypeTensor
-from pfspeak.common.just_checking import NDArray, Float32
-from typing import Iterable, List, Optional, Literal, overload, Callable, Union
+from pfspeak.common.defaults import Voices
+from typing import Callable, Iterable, Literal, overload
+from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
 
-type Waveform = NDArray[Float32]
-type WaveformBuffer = list[Waveform]
-type TokenIterable = Iterable[PfToken] | TokenList
-type DifferedDef = Union[Callable, None]
-type VoidableDef = Union[Callable, None]
-type AudioCallback = Callable[[AudioChunk], None]
+@dataclass
+class PfStatus:
+    sent: int = 0
+    received: int = 0
+
+
+@dataclass
+class PfEvent:
+
+    class Service(StrEnum):
+        TTS = "tts"
+        STT = "stt"
+
+    service: Service
+    status: PfStatus
+    recording: Recording | None
+    _finalize_self: Callable | None= None
+
+    def finalize(self):
+        if self.service != PfEvent.Service.STT:
+            raise RuntimeError("Finalize method not available for TTS events")
+        elif self._finalize_self is None:
+            raise ValueError("Finalize method was not by STT session buffer.")
+        else:
+            print("finalizing")
+            self._finalize_self(self)
+
+    def __repr__(self):
+        return (
+                f"PfEvent(service={self.service}, "
+                f"status.sent={self.status.sent}, "
+                f"status.received={self.status.received}, "
+                f"recording={len(self.recording.text) if self.recording else 0}"
+                ")"
+                )
 
 
 @dataclass(frozen=True)
@@ -25,26 +50,28 @@ class CudaSupport:
 
 
 @dataclass
-class PipelineCmds:
+class WorkerMessage:
     op: Literal["stop", "speak"]
     tokens: TokenList
-    voice: str
+    voice: Voices | str
     speed: float = 1 
 
-
-@dataclass
-class Output:
-    audio: TypeTensor
-    pred_dur: TypeTensor | None = None
+    def __repr__(self) -> str:
+        return (f"WorkerMessage(op={self.op}, "
+                f"tokens={len(self.tokens)}, "
+                f"voice='{str(self.voice)}', "
+                f"speed={self.speed})"
+                )
 
 
 @dataclass
 class PfToken:
-    phonemes: Optional[str]
+    phonemes: str | None
     whitespace: str
     text: str
-    start_ts: Optional[float] = None
-    end_ts: Optional[float] = 0
+    start_time: float | None = None
+    end_time: float | None = None
+    revision: int | None = 0
 
     @property
     def identity(self):
@@ -55,10 +82,30 @@ class PfToken:
             return NotImplemented
         return self.identity == value.identity
 
+    def __len__(self):
+        """
+        Return the phoneme length of this token.
+
+        `len(PfToken)` and `len(TokenList)` measure phoneme length rather
+        than token count.
+        """
+        ps_len = len(self.phonemes) if self.phonemes else 0
+        return ps_len + len(self.whitespace)
+
+    def __repr__(self) -> str:
+        text = self.text
+        if len(self.text) > 35:
+            text = text[:32] + "..."
+
+        return (f"PfToken(len={len(self)}, "
+                f"text='{text}', "
+                f"start_time={self.start_time})"
+                )
+
 class TokenList:
 
-    def __init__(self, tokens: Optional[TokenIterable] = None): 
-        self.tokens: List[PfToken] = []
+    def __init__(self, tokens: Iterable[PfToken] | None = None): 
+        self.tokens: list[PfToken] = []
         if tokens:
             self.tokens =  list(tokens)
         self._phonemes = None
@@ -82,19 +129,34 @@ class TokenList:
                     t.text + (" " if t.whitespace else "")
                     for t in self.tokens if t.phonemes
                     ]
-                )
+                ).strip()
 
-    def __len__(self) -> int:
-        return len(self.phonemes)
+    @property
+    def count(self):
+        return len(self.tokens)
+
+    def append(self, token):
+        self._phonemes = None
+        self._text = None
+        self.tokens.append(token)
 
     def __eq__(self, value: object, /) -> bool:
         if not isinstance(value, TokenList):
             return NotImplemented
         return list(self) == list(value)
 
-    @property
-    def count(self):
-        return len(self.tokens)
+    def __len__(self) -> int:
+       """
+        RETURN THE TOTAL PHONEME LENGTH, NOT THE NUMBER OF TOKENS.
+
+        This makes phoneme-budgeted algorithms read naturally.
+
+            while len(tokens[:i]) < max_size:
+                i += 1
+
+        Use `count` to get the number of `PfToken` objects.
+        """
+        return len(self.phonemes)
 
     @overload
     def __getitem__(self, item: int) -> PfToken: ...
@@ -115,36 +177,16 @@ class TokenList:
     def __add__(self, other: TokenList) -> TokenList:
         return TokenList(self.tokens + other.tokens)
 
-    def append(self, token):
-        self._phonemes = None
-        self._text = None
-        self.tokens.append(token)
+    def __repr__(self) -> str:
+        text = self.text
+        if len(text) > 35:
+            text = text[:32] + "..."
+        return f"TokenList(len={len(self)}, count={self.count}, text='{text}')"
 
-    def revise(self, new: TokenList) -> TokenList:
-        old_text = [t.identity for t in self]
-        new_text = [t.identity for t in new]
-
-        matcher = SequenceMatcher(a=old_text, b=new_text)
-        merged = []
-
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            match tag:
-                case "equal":
-                    merged.extend(self[i1:i2])
-                case "replace":
-                    merged.extend(new[j1:j2])
-
-                case "insert":
-                    merged.extend(new[j1:j2])
-
-                case "delete":
-                    pass
-        self.tokens = merged
-        return self
 
 @dataclass
 class AudioChunk:
-    waveform: Waveform
+    waveform: NDArray[Float32]
     samplerate: int
     start_time: float
 
@@ -156,8 +198,16 @@ class AudioChunk:
     def end_time(self) -> float:
         return self.start_time + self.duration
 
+    def __repr__(self) -> str:
+        return (f"AudioChunk(start_time={self.start_time}, "
+                f"duration={self.duration})")
+
 
 class Audio(list[AudioChunk]):
+
+    def to_waveform(self):
+        import numpy
+        return numpy.concatenate([c.waveform for c in self])
 
     @property
     def start_time(self):
@@ -188,155 +238,117 @@ class Audio(list[AudioChunk]):
 
         return self[-1].end_time - self[0].start_time
 
+    def __add__(self, other: Audio | list) -> Audio:
+        _list = super().__add__(other)
+        return Audio(_list)
+
 
 class Recording:
-    @property
-    def waveform(self):
-        ...
-
-    @property
-    def text(self) -> str:
-        return self.tokens.text
-
-    def replay(self):
-        i = 0
-        for token_index, group in groupby(self.ledger):
-            n = sum(1 for _ in group)
-            yield self.tokens[token_index], self.audio[i:i+n]
-            i += n
 
     def __init__(self,
                  tokens: TokenList | None = None,
                  audio: Audio | None = None,
+                 *,
+                 ledger: list[int] | None = None,
                  ) -> None:
         self.tokens: TokenList = tokens or TokenList()
         self.audio: Audio = audio or Audio()
-        self.ledger: list[int] = []
-
-    def revise(self, tokens: TokenList, audio: Audio):
-        self.tokens.revise(tokens)
-        self.audio += audio
-        self.apply_timestamp(audio)
-
-    def concatenate(self):
-        import numpy
-        return numpy.concatenate([c.waveform for c in self.audio])
-
-    @staticmethod
-    def float_list(start: float, end: float, count: int):
-        if count <= 2:
-            return [start, end]
-        step = (end - start) / (count - 1)
-        return [start + i * step for i in range(count)]
-
-
-    def apply_timestamp(self, audio: Audio):
-
-        pending = [t for t in self.tokens if t.start_ts is None]
-        if not pending:
-            return
-        start = audio[0].start_time
-        end = audio[-1].end_time
-        times = self.float_list(start, end, self.tokens.count + 1,)
-
-        for token, start_ts, end_ts in zip(pending, times, times[1:]):
-            token.start_ts = start_ts
-            token.end_ts = end_ts
-
-        first_pending = self.tokens.count - len(pending)
-
-        self.ledger.extend(
-                first_pending + min(
-                    (i * len(pending)) // len(audio),
-                    len(pending) - 1,
-                    )
-                for i in range(len(audio))
-                )
-
-    def normalize_timestamps(self):
-        if not self.tokens:
-            return
-        start = self.tokens[0].start_ts
-        assert start
-        for token in self.tokens:
-            if token.start_ts is None or token.end_ts is None:
-                raise RuntimeError("Can not normalize token with null timestamps")
-            token.start_ts -= start
-            token.end_ts -= start
-
-
-
-
-@dataclass
-class Result:
-    waveforms: NDArray[Float32]
-    tokens: TokenList
-
-    def __init__(self,
-                 waveform: Waveform | WaveformBuffer,
-                 tokens: TokenList
-                 ) -> None:
-
-        self.tokens = tokens
-        if isinstance(waveform, list):
-            import numpy
-            self.waveform = numpy.concatenate(waveform)
-        else:
-            self.waveform = waveform
+        self.ledger = ledger or  []
+        self.apply_timestamp()
+        self.last_stable = 0
 
     @property
     def text(self):
         return self.tokens.text
 
     @property
-    def len(self):
-        return len(self.text)
-
-    @property
-    def age(self):
-        if (end := self.tokens[-1].end_ts):
-            return time() - end
-        raise NotImplementedError
-
-    @property
     def phonemes(self):
         return self.tokens.phonemes
 
+    def to_waveform(self):
+        return self.audio.to_waveform()
 
-    def join_timestamps(self, prediction_duration):
-        if prediction_duration is None:
-            return
-        MAGIC_DIVISOR = 80
-        if not self.tokens or len(prediction_duration) < 3:
-            return
-        left = right = 2 * max(0, prediction_duration[0].item() - 3)
-        i = 1
-        for t in self.tokens:
-            if i >= len(prediction_duration)-1:
-                break
-            if not t.phonemes:
-                if t.whitespace:
-                    i += 1
-                    left = right + prediction_duration[i].item()
-                    right = left + prediction_duration[i].item()
-                    i += 1
-                continue
-            j = i + len(t.phonemes)
-            if j >= len(prediction_duration):
-                break
-            t.start_ts = left / MAGIC_DIVISOR
-            token_dur = prediction_duration[i: j].sum().item()
-            space_dur = prediction_duration[j].item() if t.whitespace else 0
-            left = right + (2 * token_dur) + space_dur
-            t.end_ts = left / MAGIC_DIVISOR
-            right = left + space_dur
-            i = j + (1 if t.whitespace else 0)
+    def revise(self, tokens: TokenList, audio: Audio):
+        self.bump_revision_number(tokens)
+        self.revise_tokens(tokens)
+        self.audio += audio
+        self.apply_timestamp()
 
-    def __add__(self, other: Result) -> Result:
-        import numpy
-        return Result(
+    def bump_revision_number(self, tokens: TokenList):
+        for token in tokens:
+            if token.revision:
+                token.revision += 1
+            else:
+                token.revision = 0
+
+    def apply_timestamp(self):
+
+        if self.created is None:
+            self.created = self.audio[0].start_time
+
+        new_audio = self.audio[len(self.ledger):]
+
+        pending = [t for t in self.tokens if t.start_time is None]
+        if not pending:
+            return
+        if not new_audio:
+            raise RuntimeError("Some tokens are missing timestamps")
+        start = new_audio[0].start_time
+        end = new_audio[-1].end_time
+        times = float_range(start, end, self.tokens.count + 1,)
+
+        for token, start_ts, end_ts in zip(pending, times, times[1:]):
+            token.start_time = start_ts
+            token.end_time = end_ts
+
+        first_pending = self.tokens.count - len(pending)
+
+        self.ledger.extend(
+                first_pending + min(
+                    (i * len(pending)) // len(new_audio),
+                    len(pending) - 1,
+                    )
+                for i in range(len(new_audio))
+                )
+
+    def normalize_timestamps(self):
+        if not self.tokens:
+            return
+        start = self.tokens[0].start_time
+        assert start
+        for token in self.tokens:
+            if token.start_time is None or token.end_time is None:
+                raise RuntimeError(
+                        "Can not normalize token with null timestamps"
+                        )
+            token.start_time -= start
+            token.end_time -= start
+
+    def revise_tokens(self, new: TokenList) -> None:
+        old_id = [t.identity for t in self.tokens]
+        new_id = [t.identity for t in new]
+
+        matcher = SequenceMatcher(a=old_id, b=new_id)
+        merged = []
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            match tag:
+                case "equal":
+                    merged.extend(self.tokens[i1:i2])
+                case "replace":
+                    merged.extend(new[j1:j2])
+                case "insert":
+                    merged.extend(new[j1:j2])
+                case "delete":
+                    pass
+                    raise RuntimeError("aborted")
+        self.tokens = TokenList(merged)
+
+    def __add__(self, other: Recording) -> Recording:
+        return Recording(
                 tokens=(self.tokens + other.tokens),
-                waveform=numpy.concatenate([self.waveform, other.waveform]),
+                audio=(self.audio + other.audio),
+                ledger=self.ledger + other.ledger,
                 )
 
     def __eq__(self, value: object, /) -> bool:
@@ -346,43 +358,83 @@ class Result:
                     or
                     self.phonemes.casefold() == value.casefold()
                     )
-        elif isinstance(value, Result):
+        elif isinstance(value, Recording):
             return self.tokens == value.tokens
 
         return NotImplemented
 
     @classmethod
-    def join(cls, results: Iterable[Result]) -> Result:
-        results = list(results)
-        if not results:
-            raise ValueError("Cannot join empty results")
-        out = results[0]
-        for r in results[1:]:
+    def join(cls, recordings: Iterable[Recording]) -> Recording:
+        recordings = list(recordings)
+        if not recordings:
+            raise ValueError("Cannot join empty recordings iterable")
+        out = recordings[0]
+        for r in recordings[1:]:
             out += r
         return out
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         return (
-            f"Result("
-            f"waveform={len(self.waveform)}, "
+            f"Recording("
+            f"duration={self.audio.duration if self.audio else 'empty'}, "
             f"text={len(self.text)}, "
             f"phonemes={len(self.phonemes)}, "
             f")"
         )
 
-    def __repr__(self) -> str:
-        ps = self.phonemes
-        if len(ps) > 40:
-            ps = ps[:37] + "..."
+def float_range(start: float, end: float, count: int):
+    if count <= 2:
+        return [start, end]
+    step = (end - start) / (count - 1)
+    return [start + i * step for i in range(count)]
 
-        txt = self.text
-        if len(txt) > 40:
-            txt = txt[:37] + "..."
 
-        return (
-            f"Result("
-            f"phoneme_string={ps!r}, "
-            f"waveform_shape=,{txt!r}, "
-            f"{tuple(self.waveform.shape)}, "
-            f")"
-        )
+def apply_prediction_duration_timestamps(
+        tokens: TokenList,
+        prediction_duration: TypeTensor
+        ) -> None:
+    """
+    Attach timestamps to each token using the model's predicted durations.
+
+    Walk the predicted durations from left to right. Trailing whitespace is
+    split evenly between the current token and the next token.
+    """
+
+    if len(prediction_duration) < 3:
+        return
+
+    frames_per_second = 80
+    next_start = max(0, prediction_duration[0].item() - 3) * 2
+    index = 1
+
+    for token in tokens:
+
+        if index >= len(prediction_duration) - 1:
+            break
+
+        if not token.phonemes:
+            if token.whitespace:
+                index += 1
+                next_start += prediction_duration[index].item() * 2
+                index += 1
+            continue
+
+        phoneme_end = index + len(token.phonemes)
+
+        if phoneme_end >= len(prediction_duration):
+            break
+
+        token.start_time = next_start / frames_per_second
+        token_duration = prediction_duration[index:phoneme_end].sum().item() * 2
+        token_end = next_start + token_duration
+        index = phoneme_end
+
+        if token.whitespace:
+            half_whitespace = prediction_duration[phoneme_end].item()
+            token_end += half_whitespace
+            next_start = token_end + half_whitespace
+            index += 1
+        else:
+            next_start = token_end
+
+        token.end_time = token_end / frames_per_second

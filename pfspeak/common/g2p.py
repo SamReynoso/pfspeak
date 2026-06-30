@@ -4,6 +4,7 @@ from pathlib import Path
 from pfspeak.common.defaults import LANG_CODES, ALIASES
 from pfspeak.common.exceptions import LanguageNotImplemented, MisakiImportError
 
+from pfspeak.common.types import VoidableDef
 from pfspeak.core.params import G2PParams
 from pfspeak.common.dataclasses import PfToken, TokenList
 from pfspeak.common.just_checking import TypeMToken
@@ -28,8 +29,6 @@ def infer_lang_code_from_voice_label(voice_label: str):
     assert code in ["a", "b"], code
     return code
 
-
-VoidableDef: TypeAlias = Callable | None
 
 
 class Graphemes2Phonemes:
@@ -113,7 +112,7 @@ class Graphemes2Phonemes:
                     text=t.text,
                     phonemes=t.phonemes,
                     whitespace=t.whitespace,
-                    start_ts=t.start_ts,
+                    start_time=t.start_ts,
                     ) 
                 for t in mtokens
                 ]

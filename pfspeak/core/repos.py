@@ -6,14 +6,10 @@ from pfspeak.common.defaults import AppSpec, KokoroRepo, KrokoRepo
 
 
 class SpeechRepo(KokoroRepo):
-
-    @staticmethod
-    def voice_filename(voice_label: str) -> str:
-        return f"voices/{voice_label}.pt"
-
     @staticmethod
     def to_params(params_file: Path) -> SpeechParams:
         return SpeechParams(**json.loads(params_file.read_text()))
+
 
 class RecognizerRepo(KrokoRepo):
 

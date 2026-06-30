@@ -1,56 +1,60 @@
 import sys
-from pathlib import Path
 from types import ModuleType
-from pfspeak.common.just_checking import (
-        TypeArchitecture,
-        NDArray,
-        Float32,
-        TypeTensor
+from pfspeak.common.models import (
+        SpeechWeights,
+        SpeechVoiceAsset,
+        SpeechParamsAsset
         )
+from pfspeak.core.repos import SpeechRepo
+from pfspeak.common.defaults import AppSpec
 from pfspeak.core.params import SpeechParams
-from pfspeak.common.dataclasses import Output
 from typing import Any, Callable, Dict, Literal
+from pfspeak.common.types import AudioPrediction
 from pfspeak.common.dataclasses import CudaSupport
+from pfspeak.common.exceptions import ArchitectureNotInitializeError
+from pfspeak.common.just_checking import TypeArchitecture, TypeTensor
 from pfspeak.extra.decorators import architecture_initialized, torch_imported
 
 
 WeightsLoader = Callable[..., Any]
-VoiceFinder = Callable[[str], Path]
 ParamLoader = Callable[..., SpeechParams]
 
 
 class SpeechModel:
     def __init__(self,
-                 params_loader: ParamLoader,
-                 voice_finder: VoiceFinder,
-                 weights_loader: WeightsLoader,
+                 app: AppSpec,
+                 repo: SpeechRepo,
                  ) -> None:
-        self.params = params_loader()
-
-        self.voice_finder = voice_finder
-        self.weights_loader = weights_loader
+        self.app = app
+        self.repo = repo
         self.loaded: bool = False
-
         self.torch: ModuleType | None = None
+        self.voices: Dict[str, TypeTensor] = {}
         self.arch: TypeArchitecture | None = None
-        self.voices: Dict[Path, TypeTensor] = {}
-        self.device: Literal["cpu", "cuda", "mps"] | None = None
+        self.params = SpeechParamsAsset.load(app, repo)
+
+
+    @property
+    def max_phonemes(self):
+        if not self.arch:
+            # NOTE: Maybe expose this through self.params
+            raise ArchitectureNotInitializeError(
+            "Maximum phoneme length is unavailable until the model "
+            "architecture has been initialized.")
+        return self.arch.bert.config.max_position_embeddings
 
     def load_model(self) -> None:
         self.load_weights()
         self.to_device()
         self.to_inference_mode()
 
-    @architecture_initialized
     def to_device(self, device: str | None = None):
         self.raise_for_missing_weights()
         assert self.arch and self.params
-        device = device or self.params.device
-        self.device = self.resolve_device_label(device)
+        self.device = self.resolve_device_label(device or self.params.device)
         self.arch.to(self.device)
         return self
 
-    @architecture_initialized
     def to_inference_mode(self):
         self.raise_for_missing_weights()
         assert self.arch
@@ -59,8 +63,9 @@ class SpeechModel:
     @architecture_initialized
     def load_weights(self) -> None:
         assert self.params and self.torch
-        loaded =  self.weights_loader(self.torch, "cpu")
+        loaded =  SpeechWeights.load(self.app, self.repo, self.torch, "cpu")
         for key, state_dict in loaded.items():
+            # TODO: waiting to see if this to happen 6-28-2026 16:44:22
             assert hasattr(self.arch, key), key
             try:
                 getattr(self.arch, key).load_state_dict(state_dict)
@@ -74,22 +79,16 @@ class SpeechModel:
     @torch_imported
     def load_voice(self, voice_label: str) -> TypeTensor:
         assert self.torch
-        voice_path = self.voice_finder(voice_label)
-        if voice_path in self.voices:
-            return self.voices[voice_path]
-        voice_weight = self.torch.load(voice_path, weights_only=True)
+        if voice_label in self.voices:
+            return self.voices[voice_label]
+        voice_weight = SpeechVoiceAsset.load(self.app, self.repo, voice_label)
         if self.device:
-            self.voices[voice_path] = voice_weight.to(self.device)
+            self.voices[voice_label] = voice_weight.to(self.device)
         else:
             raise RuntimeError(
             "Attempting to load voice tensor before specifying a target device"
             )
-        return self.voices[voice_path]
-
-    @staticmethod
-    def cast_waveform(output: Output) -> NDArray[Float32]:
-        from numpy import array, float32
-        return array(output.audio).astype(float32)
+        return self.voices[voice_label]
 
     @property
     def cuda_support(self) -> CudaSupport:
@@ -142,9 +141,54 @@ class SpeechModel:
                     "Weights where never loaded. "
                     "Attempting to operate with randomly initialized weights.")
 
+    def load_the_model_if_the_weights_are_missing(self):
+        if not self.weigth_loaded:
+            self.load_model()
+
     @architecture_initialized
-    def __call__(self, *args: Any, **kwds: Any) -> Any:
-        self.raise_for_missing_weights()
-        assert self.arch
-        self.to_inference_mode()
-        return self.arch.__call__(*args, **kwds)
+    def __call__(self,
+                 phonemes: str,
+                 voice: str,
+                 speed: float
+                 ) -> AudioPrediction:
+        """
+        RETURNS A TUPLE OF TWO PYTORCH TENSORS.
+
+        member 0:
+            audio waveform.
+
+        member 1:
+            prediction_duration.
+
+            This tells you how many frames each input phoneme should
+            live for.
+
+            Example:
+
+                [3, 4, 5, 4]
+
+            means the first phoneme lasts for 3 frames, the second
+            lasts for 4, the third lasts for 5, and the fourth lasts
+            for 4.
+
+            You can think of it like:
+
+                [000,1111,22222,3333]
+
+            where each number is the index of the phoneme repeated
+            for the number of frames the model predicted.
+        """
+
+        assert self.arch  # Guaranteed by the decorator; helps type checkers.
+
+        references_table = self.load_voice(voice)  # Collection of referencees.
+
+        self.load_the_model_if_the_weights_are_missing()  # Lazy load if needed.
+
+        self.to_inference_mode()  # Calls eval(); disables training behavior.
+
+        selected_by_phoneme_length = len(phonemes) - 1
+
+        references = references_table[selected_by_phoneme_length]
+
+        return self.arch(phonemes, references, speed)

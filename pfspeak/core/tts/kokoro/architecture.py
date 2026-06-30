@@ -1,12 +1,13 @@
 import torch
 from torch import Tensor
+from typing import Tuple
 from torch.nn import Module
 from .istftnet import Decoder
-from typing import Tuple, Union
 from transformers import AlbertConfig
 from pfspeak.core.params import SpeechParams
-from pfspeak.common.dataclasses import Output
+from pfspeak.common.types import AudioPrediction
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
+from pfspeak.common.exceptions import ContextLengthExceeded, UnknownPhonemeError
 
 
 class KokoroArchitecture(Module):
@@ -170,27 +171,27 @@ class KokoroArchitecture(Module):
                 phonemes: str,
                 ref_s: Tensor,
                 speed: float = 1,
-                return_output: bool = False
-                ) -> Union[Output, Tensor]:
+                ) -> AudioPrediction:
 
-        input_ids = [
-                self.vocab[p] 
-                for p in phonemes if self.vocab.get(p) is not None
-                ]
+        try:
 
-        input_ids = torch.LongTensor([[0, *input_ids, 0]]).to(self.device)
+            supported = [self.vocab[p] for p in phonemes]
+
+        except KeyError as e:
+            raise UnknownPhonemeError(f"Unknown phoneme: {e.args[0]!r}") from e
+
+        context = [0, *supported , 0]
+
+        if len(context) > self.bert.config.max_position_embeddings:
+            raise ContextLengthExceeded(
+                    f"{len(context)} tokens exceeds the model limit of "
+                    f"{self.bert.config.max_position_embeddings}")
+
+        input_ids = torch.LongTensor([context]).to(self.device)
+
         ref_s = ref_s.to(self.device)
-
-        assert len(input_ids) + 2 <= self.context_length, "ids > (context - 2)"
         audio, pred_dur = self.forward_with_tokens(input_ids, ref_s, speed)
-        audio = audio.squeeze().cpu()
-
-        if pred_dur is not None:
-            pred_dur = pred_dur.cpu()
-
-        if return_output:
-            return Output(audio=audio, pred_dur=pred_dur)
-        return audio
+        return audio.squeeze().cpu(), pred_dur.cpu()
 
 
 class KModelForONNX(torch.nn.Module):
@@ -203,6 +204,8 @@ class KModelForONNX(torch.nn.Module):
                 ref_s: torch.FloatTensor,
                 speed: float = 1
                 ) -> Tuple[Tensor, Tensor]:
-        waveform, duration = self.kmodel.forward_with_tokens(input_ids,
-                                                             ref_s, speed)
+        waveform, duration = self.kmodel.forward_with_tokens(
+                input_ids,
+                ref_s, speed
+                )
         return waveform, duration

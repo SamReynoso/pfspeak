@@ -1,4 +1,5 @@
 from functools import wraps
+from pathlib import Path
 from typing import Callable
 
 
@@ -35,4 +36,14 @@ def start_on_call(fn: Callable):
             self.pipeline.start(self.model_params, self.g2p_kwargs)
             self._pipeline_started = True
         return fn(self, *args, **kwargs)
+    return decorator
+
+type PolicyFollower = Callable[..., tuple[Callable, Path, Callable]]
+
+def follow_app_policy(fn: PolicyFollower):
+    def decorator(app, repo, *args):
+        excecute, file, installer = fn(app, repo, *args)
+        if not file.exists():
+            installer()
+        return excecute(app, repo, *args)
     return decorator

@@ -62,6 +62,8 @@ class Voices(StrEnum):
     AF_HEART = "af_heart"
     BR_LILYA = "bf_lily.pt"
 
+    def __repr__(self) -> str:
+        return f"Voice({self.value})"
 
 class AppSpec(BaseModel):
     version: str
@@ -88,6 +90,7 @@ class AppSpec(BaseModel):
 class RepoSpec(BaseModel):
     model_label: ModelLabels
     model_id: str
+    MANIFEST: list[str]
 
     @property
     def modle_id(self) -> str:
@@ -126,10 +129,13 @@ class KokoroRepo(RepoSpec):
     def weights_filename(self):
         return self.WEIGHTS_FILES[self.model_label]
 
+    @staticmethod
+    def voice_filename(voice_label: str) -> str:
+        return f"voices/{voice_label}.pt"
+
 
 class KrokoRepo(RepoSpec):
 
-    MANIFEST: list[str] = []
     model_label: ModelLabels =  ModelLabels.ENGLISH_RECOGNIZER
     model_id: str = REMOTES[model_label]
     model_type: str = RecognizerType.ZIPFORMER
