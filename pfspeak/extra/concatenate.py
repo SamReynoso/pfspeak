@@ -11,17 +11,26 @@ def concatenate(obj, *, dim: int = 0) -> Any:
 
 
 @concatenate.register
-def _(audio: Audio, *, dim: int = 0):
+def _(audio: Audio, *, dim: int = 0) -> Audio:
     match dim:
         case 0:
-            return npcat([a.waveform for a in audio])
+            first  = audio[0]
+
+            return Audio([
+                    AudioChunk(
+                        device_id=first.device_id,
+                        start_time=first.start_time,
+                        samplerate=first.samplerate,
+                        waveform=npcat([a.waveform for a in audio])
+                        )
+                    ])
         case _:
             raise ValueError(f"Unsupported dim={dim}")
             ...
 
 
 @concatenate.register
-def _(recording: Recording, *, dim: int = 0):
+def _(recording: Recording, *, dim: int = 0) -> Recording:
     first = recording.audio[0]
     match dim:
         case 0:
@@ -30,6 +39,7 @@ def _(recording: Recording, *, dim: int = 0):
                     audio=Audio(
                         [
                             AudioChunk(
+                                device_id=first.device_id,
                                 start_time=first.start_time,
                                 samplerate=first.samplerate,
                                 waveform=npcat(
@@ -48,6 +58,7 @@ def _(recording: Recording, *, dim: int = 0):
                 n = sum(1 for _ in group)
                 audio.append(
                         AudioChunk(
+                            device_id=first.device_id,
                             start_time=recording.audio[i].start_time,
                             samplerate=first.samplerate,
                             waveform=npcat(
@@ -80,7 +91,7 @@ def _(items: list, *, dim: int = 0):
     raise TypeError(type(first))
 
 
-def _concat_recordings(recordings: list[Recording], dim: int):
+def _concat_recordings(recordings: list[Recording], dim: int) -> Recording:
     '''
     list[recording(tokens, list[chunks])
     recording(tokens, list[chunk])
@@ -105,7 +116,7 @@ def _concat_recordings(recordings: list[Recording], dim: int):
     raise RuntimeError(f"Dim level unsupported: {dim}")
     
 
-def _concat_audios(audios: list[Audio], dim: int) -> Audio | AudioChunk:
+def _concat_audios(audios: list[Audio], dim: int) -> Audio:
     first = audios[0][0]
     kwarg = {"start_time": first.start_time, "samplerate": first.samplerate}
 
@@ -116,5 +127,7 @@ def _concat_audios(audios: list[Audio], dim: int) -> Audio | AudioChunk:
     if dim == 1:
         return Audio(base)
     if dim == 0:
-        return AudioChunk(waveform=npcat([c.waveform for c in base]), **kwarg)
+        return Audio([
+            AudioChunk(waveform=npcat([c.waveform for c in base]), **kwarg)
+            ])
     raise RuntimeError(f"Dim level unsupported: {dim}")

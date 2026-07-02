@@ -5,3 +5,13 @@ class ServiceTypes(StrEnum):
     TTS = "tts"
     STT = "stt"
 
+
+class LoadPolicy(StrEnum):
+    EAGER = "eager"
+    LAZY = "lazy"
+
+
+class InProcess: ...
+
+
+class WorkerProcess: ...

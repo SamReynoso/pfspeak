@@ -28,6 +28,8 @@ REMOTES = {
 
 IPC_AUTHKEY = b"pfspeak"
 
+DEFAULT_LLM = "qwen3:0.6b"
+
 ALIASES = {
         'en-us': 'a',
         'en-gb': 'b',
@@ -59,15 +61,6 @@ LANG_CODES = dict(
         # pip install misaki[zh]
         z='Mandarin Chinese',
         )
-
-
-class Voices(StrEnum):
-    AF_HEART = "af_heart"
-    BR_LILYA = "bf_lily.pt"
-    # TODO: Add the rest of the voices
-
-    def __repr__(self) -> str:
-        return f"Voice({self.value})"
 
 
 @dataclass(slots=True)

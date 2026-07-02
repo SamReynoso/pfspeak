@@ -173,12 +173,11 @@ class KokoroArchitecture(Module):
                 speed: float = 1,
                 ) -> AudioPrediction:
 
-        try:
+        # try:
+        # except KeyError as e:
+        # raise UnknownPhonemeError(f"Unknown phoneme: {e.args[0]!r}") from e
 
-            supported = [self.vocab[p] for p in phonemes]
-
-        except KeyError as e:
-            raise UnknownPhonemeError(f"Unknown phoneme: {e.args[0]!r}") from e
+        supported = [self.vocab[p] for p in phonemes if p in self.vocab]
 
         context = [0, *supported , 0]
 

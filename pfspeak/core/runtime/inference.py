@@ -26,7 +26,7 @@ class SpeechModel:
         self.torch: ModuleType | None = None
         self.voices: Dict[str, TypeTensor] = {}
         self.arch: TypeArchitecture | None = None
-        self.params = SpeechParamsAsset.load(app, repo)
+        self.params = SpeechParamsAsset(app, repo).load()
 
 
     @property
@@ -58,7 +58,7 @@ class SpeechModel:
     @architecture_initialized
     def load_weights(self) -> None:
         assert self.params and self.torch
-        loaded =  SpeechWeights.load(self.app, self.repo, self.torch, "cpu")
+        loaded =  SpeechWeights(self.app, self.repo).load()
         for key, state_dict in loaded.items():
             try:
                 getattr(self.arch, key).load_state_dict(state_dict)
@@ -74,7 +74,7 @@ class SpeechModel:
         assert self.torch
         if voice_label in self.voices:
             return self.voices[voice_label]
-        voice_weight = SpeechVoiceAsset.load(self.app, self.repo, voice_label)
+        voice_weight = SpeechVoiceAsset(self.app, self.repo).load(voice_label)
         if self.device:
             self.voices[voice_label] = voice_weight.to(self.device)
         else:

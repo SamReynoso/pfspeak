@@ -1,9 +1,11 @@
-from pfspeak.common.dataclasses import Audio, TokenList
+from typing import Generator
+
+from pfspeak.common.dataclasses import Audio, PfToken, TokenList
 from time import monotonic, sleep
 from numpy import zeros, float32, concatenate
 
 
-def typewriter(tokens: TokenList):
+def typewriter(tokens: TokenList) -> Generator[str]:
     start = monotonic()
 
     for token in tokens:

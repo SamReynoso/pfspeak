@@ -1,7 +1,6 @@
 import sys
 from pfspeak.app import pfconfig
 from pfspeak.cli.parser import parser
-from pfspeak.app.listen import listen
 
 
 args = parser.parse_args()
@@ -25,7 +24,13 @@ if __name__ == "__main__":
         install(pfconfig)
 
     elif args.command == "listen":
+        from pfspeak.app.listen import listen
         listen()
+
+    elif args.command == "chat":
+        from pfspeak.app.chat import chat
+        chat(args.model, args.voice)#, args.silence, args.min_words)
+
 
     elif args.command == "speak":
         from pfspeak.app.speak import serve

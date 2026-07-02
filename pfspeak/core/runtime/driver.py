@@ -65,21 +65,18 @@ class Driver:
             last_split_point = 0
             current = 0
 
-            for i , token in enumerate(tokens[:-1]):
-
-
-                if current + len(token) > max_size:
-                    split_at = last_split_point or i
-                    yield tokens[:split_at]
-                    tokens = tokens[split_at:]
-                    current = 0
-                    break
+            for i , token in enumerate(tokens):
 
                 current += len(token)
 
-                if Driver.is_split_point(token):
-                    last_split_point = i + 1
-                    print(f"'{token.phonemes}'")
+                if current > max_size:
+                    split_at = last_split_point or i
+                    yield tokens[:split_at]
+                    tokens.tokens = tokens.tokens[split_at:]
+                    break
 
+
+                if Driver.is_split_point(token):
+                    last_split_point = i
 
         yield tokens

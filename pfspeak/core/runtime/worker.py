@@ -1,25 +1,25 @@
 import os
 import sys
-import pickle
 import socket
 import subprocess
-from time import sleep
+from time import sleep, time
+from collections import deque
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.dataclasses import (
         Prediction,
         WorkerMessage,
         WorkerMessageBase)
+from multiprocessing import current_process
 from pfspeak.core.runtime.driver import Driver
 from pfspeak.common.defaults import IPC_AUTHKEY
 from pfspeak.common.defaults import DEFAULT_APP_SPEC 
 from pfspeak.core.runtime.inference import SpeechModel
 from multiprocessing.connection import Listener, Client
-from multiprocessing import current_process
 
 
 def worker(host: str, port: int):
 
-    print(f"Worker pid={os.getpid()}")
+    print(f"TTS worker: pid={os.getpid()}")
 
     current_process().authkey = IPC_AUTHKEY
 
@@ -29,39 +29,69 @@ def worker(host: str, port: int):
     model = SpeechModel(DEFAULT_APP_SPEC, repo)
     model.load_model()
 
+    jobs: deque[WorkerMessage] = deque()
+
+    gen = None
+    current_job = None
+
     while True:
 
-        msg: WorkerMessage = conn.recv()
+        if conn.poll(timeout=.02):
+            message = conn.recv()
+            if message.op == "stop":
+                print("TTS worker: exited normally")
+                return
+            if current_job and current_job.device_id == message.device_id:
+                current_job.tokens.tokens += message.tokens.tokens
+            else:
+                jobs.append(message)
 
-        if msg.op == "stop":
-            print("Worker exited normally")
-            return
+        if gen is not None:
+            assert current_job
 
-        for audio_prediction in Driver.generate_from_tokens(msg.tokens,
-                                                            model,
-                                                            msg.voice,
-                                                            msg.speed):
-            pred = Prediction(
-                        device_id=msg.device_id,
-                        tokens=audio_prediction[0],
-                        audio=audio_prediction[1][0],
-                        pred_dur=audio_prediction[1][1]
+            try:
+
+                chunk = next(gen)
+
+            except StopIteration:
+                gen, current_job = None, None
+                continue
+
+            inferance_start = time()
+            audio, prediction_duration = Driver.infer(model,
+                                                      chunk.phonemes,
+                                                      current_job.voice,
+                                                      current_job.speed
+                                                      )
+
+            print(f"Worker: inference took {time() - inferance_start} seconds")
+
+            conn.send(
+                    Prediction(
+                        audio=audio,
+                        tokens=chunk,
+                        pred_dur=prediction_duration,
+                        device_id=current_job.device_id,
                         )
-            conn.send(pred)
+                      )
+        elif jobs:
+            current_job = jobs.popleft()
+            gen = Driver.chunks(current_job.tokens, model.max_phonemes)
+
 
 def start():
 
-    print(f"Session pid={os.getpid()}")
+    print(f"Main: pid={os.getpid()}")
 
     current_process().authkey = IPC_AUTHKEY
 
-    HOST, PORT, WORKER_ARGS = _prepare_worker_launch()
+    host, port, worker_args = _prepare_worker_launch()
 
-    child = subprocess.Popen([sys.executable, *WORKER_ARGS])
+    child = subprocess.Popen([sys.executable, *worker_args])
 
     for _ in range(50):
         try:
-            conn = Client((HOST, PORT), authkey=IPC_AUTHKEY)
+            conn = Client((host, port), authkey=IPC_AUTHKEY)
             break
         except ConnectionRefusedError:
             sleep(0.05)
@@ -93,4 +123,4 @@ def shutdown(conn, process):
         process.terminate()
         process.wait(timeout=2)
 
-    print("Worker shutdown Normally")
+    print("TTS worker: shutdown Normally")

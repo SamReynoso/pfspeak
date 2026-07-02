@@ -1,10 +1,14 @@
 from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from pfspeak.core.devices import InputStream
+
 from uuid import UUID
 from enum import StrEnum
 from numpy import array, float32
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pfspeak.common.defaults import Voices
+from pfspeak.extra.voices import VoiceEnum
 from typing import Callable, Iterable, Literal, overload
 from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
@@ -24,28 +28,36 @@ class CudaSupport:
 @dataclass(slots=True)
 class PfEvent:
 
-    class Types(StrEnum):
+    class EventTypes(StrEnum):
         TTS = "tts"
         STT = "stt"
+        DUCK = "duck"
+        TICKET = "ticket"
+
+    status: PfStatus
+    service: EventTypes
 
     device_id: UUID
-    service: Types
-    status: PfStatus
-    recording: Recording | None
+    recording: Recording
+    device: InputStream | None
+
+    finalized: bool = False
     _finalize_self: Callable | None= None
 
     def finalize(self):
-        if self.service != PfEvent.Types.STT:
-            raise RuntimeError("Finalize method not available for TTS events")
+        if self.service != PfEvent.EventTypes.STT:
+            raise RuntimeError(
+                    "PfEvent.inalize method not available for TTS events"
+                    )
         elif self._finalize_self is None:
-            raise ValueError("Finalize method was not by STT session buffer.")
-        else:
-            self._finalize_self(self)
+            raise ValueError("PfEvent.finalize was never set")
+        assert self.device
+        self.finalized = True
+        self._finalize_self(self)
 
     @property
     def types(self):
-        return self.Types
-
+        return self.EventTypes
 
     def __repr__(self):
         return (f"PfEvent(service={self.service}, "
@@ -59,7 +71,7 @@ class PfEvent:
 class WorkRequest:
     device_id: UUID
     text: str 
-    voice: Voices | str | None = None
+    voice: VoiceEnum | str | None = None
     speed: float = 1 
 
     def __repr__(self) -> str:
@@ -72,7 +84,7 @@ class WorkRequest:
 
     def make(self,
              tokens: TokenList,
-             voice: Voices | str | None = None,
+             voice: VoiceEnum | str | None = None,
              *,
              speed: float | None = None
              ) -> WorkerMessage:
@@ -89,19 +101,13 @@ class WorkRequest:
                 voice=voice,
                 speed=speed)
 
-    def event(self, status: PfStatus) -> PfEvent:
-        return PfEvent(device_id=self.device_id,
-                       service=PfEvent.Types.TTS,
-                       status=status,
-                       recording=None)
-
 @dataclass(slots=True)
 class WorkerMessageBase:
     op: Literal["stop", "speak"]
 
 
 @dataclass(slots=True)
-class Centinal(WorkerMessageBase):
+class Sentinel(WorkerMessageBase):
     op: Literal["stop", "speak"] = "stop"
 
 
@@ -109,7 +115,7 @@ class Centinal(WorkerMessageBase):
 class WorkerMessage(WorkerMessageBase):
     device_id: UUID
     tokens: TokenList
-    voice: Voices | str
+    voice: VoiceEnum | str
     speed: float = 1 
 
     def __repr__(self) -> str:
@@ -117,14 +123,6 @@ class WorkerMessage(WorkerMessageBase):
                 f"tokens={len(self.tokens)}, "
                 f"voice='{str(self.voice)}', "
                 f"speed={self.speed})"
-                )
-
-    def event(self, status: PfStatus) -> PfEvent:
-        return PfEvent(
-                service=PfEvent.Types.TTS,
-                device_id=self.device_id,
-                recording=None,
-                status=status,
                 )
 
 
@@ -136,6 +134,7 @@ class PfToken:
     start_time: float | None = None
     end_time: float | None = None
     revision: int | None = 0
+    _len: int | None = 0
 
     @property
     def identity(self):
@@ -153,8 +152,11 @@ class PfToken:
         `len(PfToken)` and `len(TokenList)` measure phoneme length rather
         than token count.
         """
+        if self._len:
+            return self._len
         ps_len = len(self.phonemes) if self.phonemes else 0
-        return ps_len + len(self.whitespace)
+        self._len = ps_len + len(self.whitespace)
+        return self._len
 
     def __repr__(self) -> str:
         text = self.text
@@ -165,6 +167,7 @@ class PfToken:
                 f"text='{text}', "
                 f"start_time={self.start_time})"
                 )
+
 
 class TokenList:
 
@@ -228,7 +231,6 @@ class TokenList:
     @overload
     def __getitem__(self, item: slice) -> TokenList: ...
 
-
     def __getitem__(self, item: int | slice):
         if isinstance(item, slice):
             return TokenList(self.tokens[item])
@@ -279,8 +281,9 @@ class Prediction:
                                              self.pred_dur)
         return PfEvent(
                 status=status,
+                device=None,
                 device_id=self.device_id,
-                service=PfEvent.Types.TTS,
+                service=PfEvent.EventTypes.TTS,
                 recording=Prediction.recording(self))
 
     @staticmethod
@@ -430,10 +433,28 @@ class Recording:
                     pass
         self.tokens = TokenList(merged)
 
+    def head(self, index: int):
+        audio = Audio(
+                [self.audio[i] for i, t in enumerate(self.ledger) if t < index]
+                )
+        return Recording(
+                tokens=self.tokens[:index],
+                ledger=self.ledger[:index],
+                audio=audio)
+
+    def tail(self, index: int):
+        audio = Audio(
+                [self.audio[i] for i, t in enumerate(self.ledger) if t >= index]
+                )
+        return Recording(
+                tokens=self.tokens[index:],
+                ledger=self.ledger[index:],
+                audio=audio)
+
     def __add__(self, other: Recording) -> Recording:
         return Recording(
-                tokens=(self.tokens + other.tokens),
-                audio=(self.audio + other.audio),
+                tokens=self.tokens + other.tokens,
+                audio=self.audio + other.audio,
                 ledger=self.ledger + other.ledger,
                 )
 
@@ -464,7 +485,7 @@ class Recording:
             f"Recording("
             f"duration={self.audio.duration if self.audio else 'empty'}, "
             f"text={len(self.text)}, "
-            f"phonemes={len(self.phonemes)}, "
+            f"phonemes={len(self.phonemes)}"
             f")"
         )
 

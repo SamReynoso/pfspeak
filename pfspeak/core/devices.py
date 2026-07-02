@@ -1,18 +1,19 @@
 import os
 import json
-import socket
+from time import time
 import uuid
+import socket
 from pathlib import Path
 from threading import Thread
 from multiprocessing import Queue
 from abc import ABC, abstractmethod
-from pfspeak.common.defaults import Voices
+from pfspeak.extra.voices import VoiceEnum
 from pfspeak.core.param import AudioChannels
 from pfspeak.common.requests import OllamaRequest
 from pfspeak.core.session import STTSession, TTSSession
 from pfspeak.common.types import AudioCallback, PathLike
 from pfspeak.common.types import DifferedDef, VoidableDef
-from pfspeak.common.dataclasses import AudioChunk, WorkRequest
+from pfspeak.common.dataclasses import AudioChunk, PfEvent, TokenList, WorkRequest
 
 
 class InputStream(ABC):
@@ -21,25 +22,34 @@ class InputStream(ABC):
 
     def __init__(self,
                  callback: DifferedDef = None,
-                 voice: Voices | str | None = None,
+                 voice: VoiceEnum | str | None = None,
                  speed: float = 1,
-
                  ) -> None:
         super().__init__()
-        self.uuid = uuid.uuid4()
-        self.callback: DifferedDef = callback
-        self.recordings = []
         self.voice = voice
         self.speed = speed
+        self.thread = None
+        self.recordings = []
         self.streaming = False
+        self.uuid = uuid.uuid4()
         self.exceptions: DifferedDef = None
+        self._current: PfEvent | None = None
+        self.callback: DifferedDef = callback
+
+    @property
+    def device_id(self):
+        return self.uuid
+
+    @property
+    def current(self) -> PfEvent | None:
+        return self._current
 
     @abstractmethod
     def run(self): ...
 
     def start(self):
-        self.streaming = True
         self.thread = Thread(target=self.run, daemon=True)
+        self.streaming = True
         self.thread.start()
 
     def stop(self):
@@ -53,11 +63,12 @@ class TTSStream(InputStream):
     SESSIONIZER = TTSSession
 
     def request(self, text: str):
+        print(text)
         req = WorkRequest(
                 device_id=self.uuid,
-                text=text,
                 speed=self.speed,
                 voice=self.voice,
+                text=" ".join(text.splitlines()),
                 )
         assert self.callback
         self.callback(req)
@@ -69,29 +80,91 @@ class STTStream(InputStream):
 
 
 class Ollama(TTSStream):
-    def __init__(self, callback: AudioCallback | None = None) -> None:
+    def __init__(self,
+                 model: str,
+                 callback: AudioCallback | None = None
+                 ) -> None:
         super().__init__()
-        self.callback = callback
+        self.model = model
         self.requests = Queue()
+        self.callback = callback
 
+    def ping(self, timeout: float = 10.0) -> bool:
+        model = ""
+        return OllamaRequest(model).ping(timeout)
 
-    def adaptor(self, model: str, prompt: str):
+    def pull(self, model: str) -> None:
+        OllamaRequest(model=model).pull()
+
+    def adaptor(self,
+                event: PfEvent | None = None,
+                model: str | None = None,
+                prompt: str | None = None
+                ):
+        if event:
+            if event.recording:
+                prompt = event.recording.text
+        elif prompt is None:
+            raise ValueError("Ollama adapter requires a prompt or PfEvent")
+        model = model or self.model
         self.requests.put((model, prompt))
 
     def run(self):
         try:
-            print("Ollama device online")
+            print("Device: Ollama online")
             while self.streaming:
                 model, prompt = self.requests.get()
-                ollama = OllamaRequest(model=model, stream=False)
+                if model is False or prompt is False:
+                    continue
+                request_start = time()
+                ollama = OllamaRequest(model=model, stream=True)
                 response = ollama.request(prompt)
-                event = response.json()
-                if text := event.get("response"):
-                    self.request(text)
+                print(f"Ollama: first bytes took {time() - request_start} seconds")
+
+                buffer = ""
+                buffer_size  = 600
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    if text := event.get("response"):
+
+                        if len(buffer + " " + text) > buffer_size:
+                            self.request(buffer)
+                            buffer = ""
+                            buffer *= 2
+                            print("buffer size", buffer_size)
+
+                        buffer += text
+
+
+                if buffer:
+                    self.request(buffer)
+
         except Exception as e:
             assert self.exceptions
             self.exceptions(e)
 
+    def stop(self):
+        self.streaming = False
+        self.requests.put((False, False))
+        if self.thread:
+            self.thread.join()
+
+class Hook(TTSStream):
+    def __init__(self, callback: VoidableDef = None) -> None:
+        super().__init__()
+        self.callback: VoidableDef = callback 
+
+    def speak(self, line: str, voice: str, speed: float = 1.0):
+        print("Hook: routing request to device session")
+        self.voice = voice
+        self.speed = speed
+        assert self.callback
+        self.request(line)
+
+    def run(self):
+        ...
 
 class Fifo(TTSStream):
     def __init__(self, path: PathLike, callback: VoidableDef = None) -> None:
@@ -103,13 +176,10 @@ class Fifo(TTSStream):
     def run(self):
         try:
             assert self.callback
-
             if not self.path.exists():
                 os.mkfifo(self.path)
-
             fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-
-            print("Fifo device online")
+            print("Device: Fifo online")
             self.streaming = True
             with open(fd, "r") as fifo:
                 while self.streaming:
@@ -131,11 +201,9 @@ class Tcp(TTSStream):
     def run(self):
         try:
             assert self.callback
-
             with socket.socket() as server:
                 conn, _ = server.accept()
-
-                print("Tcp device online")
+                print("Device: Tcp online")
                 while self.streaming:
                     with conn:
                         file = conn.makefile()
@@ -155,10 +223,10 @@ class Microphone(STTStream):
                  callback: AudioCallback | None = None,
                  ) -> None:
         super().__init__()
-        self.samplerate = samplerate
-        self.blocksize = blocksize
-        self.callback: DifferedDef = callback
         self.stream = None
+        self.blocksize = blocksize
+        self.samplerate = samplerate
+        self.callback: DifferedDef = callback
 
     def run(self):
         try:
@@ -169,7 +237,7 @@ class Microphone(STTStream):
                                                self.blocksize,
                                                AudioChannels.MONO)
             self.stream.start()
-            print("Microphone device online")
+            print("Device: Microphone online")
         except Exception as e:
             assert self.exceptions
             self.exceptions(e)
@@ -202,9 +270,9 @@ class Microphone(STTStream):
             callback(
                     AudioChunk(
                         device_id=device_id,
-                        waveform = mono(indata),
+                        waveform=mono(indata),
                         samplerate=samplerate,
-                        start_time = time.inputBufferAdcTime
+                        start_time=time.inputBufferAdcTime
                         )
                     )
 

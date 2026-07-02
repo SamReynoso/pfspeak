@@ -1,12 +1,13 @@
 from queue import Queue
 from threading import Thread
+from pfspeak.extra.voices import Voices
 from pfspeak.core.runtime import worker
 from pfspeak.core.repo import SpeechRepo
+from pfspeak.common.defaults import AppSpec
 from pfspeak.common.types import DifferedDef
 from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.common.defaults import AppSpec, Voices
 from pfspeak.common.dataclasses import WorkRequest, WorkerMessage
-from pfspeak.common.dataclasses import Centinal, PfStatus, Prediction
+from pfspeak.common.dataclasses import Sentinel, PfStatus, Prediction
 
 
 class PipelineConnections:
@@ -21,7 +22,7 @@ class PipelineConnections:
         self.receive_back = Thread(target=receive_back, daemon=True)
 
     def start(self):
-        print("Initualizing pipeline connectons")
+        print("Pipeline: initualizing connectons")
         self.child, self.conn = worker.start()
         self.send_to.start()
         self.receive_back.start()
@@ -31,7 +32,7 @@ class PipelineConnections:
         worker.shutdown(self.conn, self.child)
         self.send_to.join()
         self.receive_back.join()
-        print("Pipeline works shutdown complete")
+        print("Pipeline: works shutdown")
 
     def send(self, value):
         assert self.conn
@@ -49,7 +50,7 @@ class PfPipeline:
                  repo: SpeechRepo,
                  g2p: Graphemes2Phonemes
                  ) -> None:
-        print("Inistulizing pipeline")
+        print("Pipeline: inistulizing ")
         self.app = app
         self.repo = repo
         self.g2p = g2p
@@ -60,14 +61,12 @@ class PfPipeline:
         self.add_event: DifferedDef = None
 
         self.speed = 1
-        self.voice = Voices.AF_HEART
+        self.voice = Voices.EN.AF_HEART
         self.connections = PipelineConnections(self.send_to, self.receive_back)
-        print("Pipeline Initualized")
+        print("Pipeline: initualized")
 
-    def __post_update(self, message: WorkerMessage):
-        assert self.add_event
+    def __update_status(self, message: WorkerMessage):
         self.status.sent += len(message.tokens)
-        self.add_event(message.event(self.status))
 
     def __post_recording(self, prediction: Prediction):
         assert self.add_event
@@ -76,9 +75,11 @@ class PfPipeline:
 
     def send_to(self):
         while self.streaming:
-            msg: WorkerMessage = self.buffer.get()
+            msg: WorkerMessage | Sentinel = self.buffer.get()
             self.connections.send(msg)
-            self.__post_update(msg)
+            if isinstance(msg, Sentinel):
+                return
+            self.__update_status(msg)
 
     def receive_back(self):
         assert self.add_event
@@ -87,18 +88,20 @@ class PfPipeline:
             self.__post_recording(prediction)
 
     def start(self):
-        print("Pipeline started")
+        print("Pipeline: starting")
         self.streaming = True
         self.connections.start()
+        print("Pipeline: READY")
 
     def stop(self):
-        print("Stoping pipeline")
+        print("Pipeline: stopping")
         self.streaming = False
-        self.buffer.put(Centinal())
+        self.buffer.put(Sentinel())
         self.connections.close()
+        print("Pipeline: stopped")
 
     def factory(self):
-        print("Device callback assigned")
+        print("Pipeline: Device assigned")
 
         def callback(request: WorkRequest):
             voice = self.voice if request.voice is None else request.voice
