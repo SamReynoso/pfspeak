@@ -21,6 +21,7 @@ def fw(text: str):
         los += len(word) + 1
     sys.stdout.flush()
 
+
 def listen():
     commands = Queue()
     def keyboard():
@@ -32,6 +33,8 @@ def listen():
     lines = []
     ollama = Ollama()
     microphone = Microphone()
+
+    current_ai = ""
     with PfSpeak().streaming(ollama, microphone) as session:
         for e in session:
             print(f"""\x1b[2J\x1b[H
@@ -44,16 +47,29 @@ def listen():
         PARTIAL""")
             if e.recording is None:
                 continue
-            fw(e.recording.text)
             if e.service == e.types.STT:
+                fw("You: " + e.recording.text)
+                print()
+                if current_ai:
+                    fw("QWEN: "+ e.recording.text)
                 if not commands.empty():
-                    commands.get()
+                    while not commands.empty():
+                        commands.get()
+
                     e.finalize()
                     lines.append(e.recording.text)
-                    print()
-                    print("\t\t\t\t\tSENDING")
-                    ollama.adaptor("qwen3-coder", e.recording.text)
-                    print("sent")
+                    ollama.adaptor("qwen3-coder",
+                    f"""
+<system>
+You are a speech enabled AI assistent. Responses should be brief and not contain
+structured text like markdown or code examples.
+</system>
+
+
+<user>
+ {e.recording.text}
+</user>"""
+                                   )
             if e.service == e.types.TTS:
-                print("QWEN:", e.recording.text)
                 play_event_recording(e, session)
+                current_ai = ""

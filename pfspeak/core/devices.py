@@ -1,12 +1,11 @@
 import os
-import json
-import socket
 import uuid
+import socket
 from pathlib import Path
 from threading import Thread
 from multiprocessing import Queue
 from abc import ABC, abstractmethod
-from pfspeak.common.defaults import Voices
+from pfspeak.extra.voices import VoiceEnum
 from pfspeak.core.param import AudioChannels
 from pfspeak.common.requests import OllamaRequest
 from pfspeak.core.session import STTSession, TTSSession
@@ -21,7 +20,7 @@ class InputStream(ABC):
 
     def __init__(self,
                  callback: DifferedDef = None,
-                 voice: Voices | str | None = None,
+                 voice: VoiceEnum | str | None = None,
                  speed: float = 1,
 
                  ) -> None:

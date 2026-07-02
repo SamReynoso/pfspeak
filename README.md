@@ -22,12 +22,8 @@ PfSpeak provides:
 - Models installed separately
 - Voices installed separately
 - Runtime abstraction
-- Streaming APIs
-- Async APIs
-- Result composition
 - Daemon execution
 - Model management
-- Voice management
 
 allowing applications to interact with speech synthesis through
 a consistent interface rather than directly managing model

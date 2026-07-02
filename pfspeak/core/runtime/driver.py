@@ -79,7 +79,5 @@ class Driver:
 
                 if Driver.is_split_point(token):
                     last_split_point = i + 1
-                    print(f"'{token.phonemes}'")
-
 
         yield tokens

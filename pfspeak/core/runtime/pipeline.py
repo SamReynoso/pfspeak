@@ -1,10 +1,11 @@
 from queue import Queue
 from threading import Thread
+from pfspeak.extra.voices import Voices
 from pfspeak.core.runtime import worker
 from pfspeak.core.repo import SpeechRepo
+from pfspeak.common.defaults import AppSpec
 from pfspeak.common.types import DifferedDef
 from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.common.defaults import AppSpec, Voices
 from pfspeak.common.dataclasses import WorkRequest, WorkerMessage
 from pfspeak.common.dataclasses import Centinal, PfStatus, Prediction
 
@@ -60,7 +61,7 @@ class PfPipeline:
         self.add_event: DifferedDef = None
 
         self.speed = 1
-        self.voice = Voices.AF_HEART
+        self.voice = Voices.EN.AF_HEART
         self.connections = PipelineConnections(self.send_to, self.receive_back)
         print("Pipeline Initualized")
 

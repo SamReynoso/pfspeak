@@ -4,7 +4,7 @@ from enum import StrEnum
 from numpy import array, float32
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from pfspeak.common.defaults import Voices
+from pfspeak.extra.voices import VoiceEnum
 from typing import Callable, Iterable, Literal, overload
 from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
@@ -59,7 +59,7 @@ class PfEvent:
 class WorkRequest:
     device_id: UUID
     text: str 
-    voice: Voices | str | None = None
+    voice: VoiceEnum | str | None = None
     speed: float = 1 
 
     def __repr__(self) -> str:
@@ -72,7 +72,7 @@ class WorkRequest:
 
     def make(self,
              tokens: TokenList,
-             voice: Voices | str | None = None,
+             voice: VoiceEnum | str | None = None,
              *,
              speed: float | None = None
              ) -> WorkerMessage:
@@ -109,7 +109,7 @@ class Centinal(WorkerMessageBase):
 class WorkerMessage(WorkerMessageBase):
     device_id: UUID
     tokens: TokenList
-    voice: Voices | str
+    voice: VoiceEnum | str
     speed: float = 1 
 
     def __repr__(self) -> str:

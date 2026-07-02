@@ -1,7 +1,6 @@
 from pfspeak.app import pfconfig
 from pfspeak.common.defaults import DEFAULT_APP_SPEC as default
-from pfspeak.tts.runtime import TextToSpeech
-from pfspeak.tts.specs import SpeechSpec
+from pfspeak.core.repo import SpeechRepo
 
 
 Q = []
@@ -146,7 +145,7 @@ boot_messages = {
     ),
 }
 
-rs = SpeechSpec()
+rs = SpeechRepo()
 
 config_output = (
 f"""Current PfSpeak Configuration
@@ -157,25 +156,19 @@ Application
     app name:           {pfconfig.app_name}
 
 Directories
-    config file:        {default.config_file}
     data root:          {default.data_dir}
     cache root:         {default.cache_dir}
-    messages dir:       {pfconfig.messages_dir}
+    config file:        {default.config_file}
 
-Pipeline
-    repo id:            {rs.model_id}
-    model:              {TextToSpeech(runtime_spec=rs).model_params.weights_file}
-
-Audio
-    language:           {pfconfig.lang}
+TTS Pipeline
     voice:              {pfconfig.voice}
-    speech speed:       {pfconfig.speech_speed}
+    repo id:            {rs.model_id}
+    language:           {pfconfig.lang}
     sample rate:        {pfconfig.samplerate}
-    latency:            {pfconfig.latency}
+    speech speed:       {pfconfig.speech_speed}
 
-Runtime
-    queue size:         {pfconfig.queue_size}
-    system messages:    {pfconfig.play_system_messages}
+TTS Daemon
+    latency:            {pfconfig.latency}
     pipe path:          {pfconfig.pipe_path}
 """
     )

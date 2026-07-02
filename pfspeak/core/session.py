@@ -1,13 +1,13 @@
 from __future__ import annotations
-from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .devices import InputStream
 
 from uuid import UUID
-from queue import Empty, Queue
 from typing import Callable
+from queue import Empty, Queue
+from abc import ABC, abstractmethod
 from collections.abc import Generator
 from pfspeak.core.param import ListenParams
 from pfspeak.common.types import OptionalSpec
@@ -18,12 +18,7 @@ from pfspeak.common.defaults import DEFAULT_APP_SPEC
 from pfspeak.core.runtime.buffer import ListenBuffer
 from pfspeak.core.runtime.pipeline import PfPipeline
 from pfspeak.core.repo import RecognizerRepo, SpeechRepo
-
-
-class InProcess: ...
-
-
-class WorkerProcess: ...
+from pfspeak.core.types import InProcess, WorkerProcess
 
 
 class BaseSession(ABC):
@@ -73,7 +68,7 @@ class STTSession(BaseSession):
 
     def create_pipeline(self):
         params = ListenParams()
-        recognizer = RecognizerAsset.load(self.app, self.repo, params)
+        recognizer = RecognizerAsset(self.app, self.repo).load(params)
         g2p = Graphemes2Phonemes()
         self.buffer = ListenBuffer(recognizer, g2p)
 
@@ -82,6 +77,7 @@ class STTSession(BaseSession):
         def finalize(event: PfEvent) -> None:
             self.devices[event.device_id].recordings.append(event.recording)
             self.buffer.reset_stream()
+            put(event)
 
         def emit(event: PfEvent):
             event._finalize_self = finalize

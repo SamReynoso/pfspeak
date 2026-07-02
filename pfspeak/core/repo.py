@@ -1,17 +1,13 @@
-import json
-from pathlib import Path
-from .param import SpeechParams
-from dataclasses import dataclass
 from pfspeak.common import defaults 
-from pfspeak.core.param import RecognizerType
+from pfspeak.common.types import VoiceLable
 from pfspeak.common.defaults import RepoSpec 
+from pfspeak.core.param import RecognizerType
 
 
 class SpeechRepo(RepoSpec):
     model_label: defaults.ModelLabels = defaults.ModelLabels.KOKORO
     model_id: str = defaults.REMOTES[model_label]
-    source_params_filename: str = "config.json"
-    params_filename: str = "params.json"
+    params_filename: str = "config.json"
 
     WEIGHTS_FILES: dict = {
             defaults.ModelLabels.KOKORO:
@@ -31,18 +27,11 @@ class SpeechRepo(RepoSpec):
         return self.WEIGHTS_FILES[self.model_label]
 
     @staticmethod
-    def voice_filename(voice_label: str) -> str:
+    def voice_filename(voice_label: VoiceLable) -> str:
         return f"voices/{voice_label}.pt"
 
 
-    @staticmethod
-    def to_params(params_file: Path) -> SpeechParams:
-        return SpeechParams(**json.loads(params_file.read_text()))
-
-
 class RecognizerRepo(RepoSpec):
-
-    tokens: str= "tokens.txt"
 
     model_label: defaults.ModelLabels =  defaults.ModelLabels.ENGLISH_RECOGNIZER
     model_id: str = defaults.REMOTES[model_label]
@@ -56,6 +45,10 @@ class RecognizerRepo(RepoSpec):
             "decoder.onnx",
             "joiner.onnx",
             ]
+
+    @property
+    def tokens(self) -> str:
+        return  "tokens.txt"
 
     @property
     def postfix(self) -> str:

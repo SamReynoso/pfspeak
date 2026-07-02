@@ -61,15 +61,6 @@ LANG_CODES = dict(
         )
 
 
-class Voices(StrEnum):
-    AF_HEART = "af_heart"
-    BR_LILYA = "bf_lily.pt"
-    # TODO: Add the rest of the voices
-
-    def __repr__(self) -> str:
-        return f"Voice({self.value})"
-
-
 @dataclass(slots=True)
 class AppSpec:
     version: str
