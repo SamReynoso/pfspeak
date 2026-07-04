@@ -77,7 +77,6 @@ set value unchanged timeout <seconds>
 
 import sys
 import inspect
-from word2number import w2n
 from pfspeak import PfSpeak
 from pfspeak.extra import events
 from pfspeak.common import dataclasses
@@ -91,6 +90,7 @@ from pfspeak.core.runtime.pipeline import PfPipeline
 
 class Mem:
 
+    # The order matters
     CONTEXT = [
             dataclasses,
             Ollama,
@@ -119,44 +119,17 @@ class Mem:
         return self._memory
 
 
-class SetValue:
-    def __init__(self):
-        self.word_minimum = 8
-        self.unchanged_timeout = 6
-
-    def set(self, e: PfEvent):
-        words = events.words(e)
-        if len(words) < 5 or words[:2] != ["set", "value"]:
-            return
-
-        atter = "_".join([words[2], words[3]])
-
-        candidate = ""
-        accetped = ""
-        try:
-            for word in words[4:]:
-                " ".join([candidate, word])
-                accetped = w2n.word_to_num(candidate)
-        except ValueError:
-            ...
-
-        try:
-            setattr(self, atter, float(accetped))
-            print(f"Values: set {atter}' to '{accetped}'")
-        except Exception:
-            print("Values: sorry I must have missed that")
-
-
 def chat(model: str = DEFAULT_LLM, _: str = "af_heart") -> int:
 
-    memory = Mem()
-
-    pf = PfSpeak()
-    microphone = Microphone()
     ollama = Ollama(model)
-    ollama.ping()
+    if not ollama.ping():
+        sys.stderr.write("Error: Unable to find local Ollama service\n")
+        return 1
     ollama.pull(model)
-    values = SetValue()
+
+    microphone = Microphone()
+    pf = PfSpeak()
+    memory = Mem()
 
     with pf.streaming(microphone, ollama) as session:
         for e in session:
@@ -168,7 +141,7 @@ def chat(model: str = DEFAULT_LLM, _: str = "af_heart") -> int:
                 pf.print(e)
 
             if e.service == e.types.DUCK:
-                if events.anywhere(e, "midnight rendezvous"):
+                if events.anywhere(e, "pizza moonlight"):
                     pf.play(kill=True)
                     session.reset(microphone)
 
@@ -203,8 +176,8 @@ def chat(model: str = DEFAULT_LLM, _: str = "af_heart") -> int:
 
             elif e := microphone.current:
                 assert e.service == e.types.STT, e.service
-                if events.unchanged_for(e, values.unchanged_timeout):
-                    if events.word_count(e) > values.word_minimum:
+                if events.unchanged_for(e, 5):
+                    if events.word_count(e) > 12:
                         line =e.recording.text
                         memory.append_user(line)
 
@@ -214,26 +187,17 @@ def chat(model: str = DEFAULT_LLM, _: str = "af_heart") -> int:
                     print(f"Chat: resetting for inactivity")
                     session.reset(microphone)
 
-        return 0
+        return 1
 
 
 def clear():
     print("\033[2J\033[H", end="")
 
+
 def line_ends(line: str):
     if len(line) > 32:
         return line[:10] + "..." + line[-10:]
     return line
-
-
-
-
-
-
-
-
-
-
 
 
 

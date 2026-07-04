@@ -1,176 +1,205 @@
 # PfSpeak
 
-Speech synthesis runtime and daemon for Python.
+PfSpeak is an event-driven speech framework for building local voice
+applications.
 
-Build text-to-speech applications using a unified synchronous,
-asynchronous, streaming, and daemon-based API.
+Rather than exposing separate APIs for speech recognition, speech
+synthesis, language models, FIFOs, sockets, and microphones, PfSpeak
+treats them all as devices participating in the same event stream.
 
-PfSpeak separates runtime code from models and voice assets,
-keeping installations small while providing a consistent
-developer experience across local and service-based execution.
+Applications are built by composing devices and reacting to events,
+rather than orchestrating independent APIs.
 
 ---
 
-## Why PfSpeak?
+## Features
 
-PfSpeak focuses on application development rather than model
-implementation.
-
-PfSpeak provides:
-
-- Runtime package size ~36 KB (compressed)
-- Models installed separately
-- Voices installed separately
-- Runtime abstraction
-- Daemon execution
-- Model management
-
-allowing applications to interact with speech synthesis through
-a consistent interface rather than directly managing model
-execution.
+- Streaming speech recognition
+- Streaming text-to-speech
+- Event-driven architecture
+- Local-first design
+- Multiple simultaneous devices
+- FIFO and TCP device support
+- Automatic playback queueing
+- Playback priorities and interrupt handling
+- Automatic microphone ducking during playback
 
 ---
 
 ## Installation
 
+### PyPI
+
+Pending release.
+
 ### GitHub
 
 ```bash
-pip install git+https://github.com/SamReynoso/pfspeak
+pip install git+https://github.com/samreynoso/pfspeak.git
 ```
 
-### Daemon Bootstrap Installer
-
-```bash
-curl https://samreynoso.github.io/files/bootstrap_linux.txt | sh
-
-# or
-
-git clone https://github.com/SamReynoso/pfspeak.git
-cd pfspeak
-./bootstrap_linux.sh
-
-```
-
-The bootstrap installer is the fastet way to initialize environment for 
-the pfspeak daemon and doesn't require running `python -m pfspeak install`
-or even cloning the repository. It pfspeak daemon service is only 
-available for Linux base systems for the time being. 
-
-#### Example Daemon Request
-
-```
-echo "Hello World!" > $PFSPEAK
-```
 ---
 
 ## Quick Start
 
-### Generate Speech
+Most applications follow this pattern:
 
-```python
-from pfspeak import Runtime
-from pfspeak import Voices
-from pfspeak import Result
+1. Create devices.
+2. Create a session.
+3. React to events.
 
-runtime = Runtime()
 
-greating = runtime("Hello world")
-response = runtime("Wello horld", Voices.AF_BELLA)
+This example creates a microphone, sends recognized speech to Ollama,
+and automatically plays generated responses.
 
-result = Result.joint([greating, response])
-
-result.audio
+```
+Microphone
+     │
+     ▼
+  STT Event
+     │
+     ▼
+ Ollama.adapter()
+     │
+     ▼
+  TTS Event
+     │
+     ▼
+  pf.play()
 ```
 
 ```python
-from pfspeak import Runtime
+from pfspeak import PfSpeak
+from pfspeak.core import Microphone, Ollama
 
-runtime = Runtime()
+pf = PfSpeak()
 
-result = runtime("Hello world")
+microphone = Microphone()
+ollama = Ollama("qwen3:4b")
 
-result.audio
-```
+with pf.streaming(microphone, ollama) as session:
+    for event in session:
+        if event.device == microphone:
+            ollama.adapter(event)
+            pf.print(event)
 
-### Streaming Generation
-
-```python
-from pfspeak import Runtime
-
-runtime = Runtime()
-
-for result in runtime.generate(book_text):
-    result.audio 
-```
-
-### Async Generation
-
-```python
+        else:
+            pf.play(event)
+            pf.print(event)
 ```
 
 ---
 
-## Daemon Mode
+## Core Concepts
 
-Start a local speech daemon:
+### PfSpeak
+
+The primary entry point into the library.
+
+`PfSpeak` prepares required assets, creates sessions, and provides
+development utilities such as live conversation rendering and audio
+playback.
+
+### Sessions
+
+A `PfSession` connects one or more devices together and produces a
+stream of immutable events.
+
+Applications are typically simple event loops.
+
+```python
+with pf.streaming(...) as session:
+    for event in session:
+        ...
+```
+
+### Devices
+
+Devices either produce speech, consume speech, or both.
+
+Examples include:
+
+- `Microphone`
+- `Ollama`
+- `Tcp`
+- `Fifo`
+- `Hook`
+
+Because every device participates in the same event stream, combining
+them requires very little application code.
+
+### Events
+
+Events are snapshots describing work performed by a device.
+
+Applications generally react to events rather than calling device
+methods directly.
+
+---
+
+## Playback
+
+`pf.play()` is a convenience helper for playing TTS events produced by a
+session.
+
+Features include:
+
+- non-blocking playback queue
+- automatic microphone muting while speaking
+- playback priorities
+- automatic resume after interruptions
+
+Applications that require custom audio behavior are free to ignore
+`pf.play()` entirely.
+
+---
+
+## Text To Speech
+
+`pf.speech()` provides a convenient way to inject text into an active
+session without creating another producer.
+
+This is particularly useful for command line tools, interactive shells,
+or applications that occasionally need to synthesize arbitrary text.
+
+---
+
+## Examples
+
+The repository contains complete working examples covering common
+workflows.
+
+- Basic speech recognition
+- Basic text-to-speech
+- Local chatbot
+
+Most examples can be run directly from the command line.
 
 ```bash
-python -m pfspeak serve
-
-# Or
-
-systemctl --user start pfspeak.service
+python -m pfspeak examples chat
 ```
 
 ---
 
-## Runtime API
+## Design Philosophy
 
-The Runtime class provides a single interface for:
+PfSpeak is built around a few simple ideas.
 
-- Local inference
-- Streaming inference
-- Async inference
-- Daemon-backed execution
-- Pipeline execution
+The library should have a clear understanding of why it exists and where
+its responsibilities begin and end.
 
-The goal is to expose a stable application-facing API regardless of backend implementation details.
+Devices should compose naturally instead of requiring special cases or
+monkey patching.
 
-```python
-from pfspeak import Runtime
+PfSpeak does not distinguish between "audio devices" and "text devices."
+Every device communicates through the same event model.
 
-runtime = Runtime()
-
-result = runtime("Hello world")
-
-result.audio
-```
+Applications should be ordinary Python programs driven by an event loop
+using high-level, predictable components.
 
 ---
 
-## Project Status
-
-Beta
-
-Implemented:
-
-- English synthesis
-- Streaming generation
-- Daemon mode
-- Runtime pipelines
-- Voice management
-- Automatic model installation
-
-Planned:
-
-- Expanded multilingual support
-- Additional phoneme processors
-- Additional runtime backends
-- Additional platform support
-
----
 
 ## License
 
-Pending
+MIT

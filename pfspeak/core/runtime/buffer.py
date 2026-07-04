@@ -35,14 +35,14 @@ class ListenBuffer:
 
     def duck(self):
         if not self.is_ducked:
-            self.status.line = "ducked"
+            self.status.line += "| ducked"
             self.reset_stream()
             with self.stream_lock:
                 self.is_ducked= True
 
     def unduck(self):
         if self.is_ducked:
-            self.status.line = "online"
+            self.status.line += "| online"
             self.reset_stream()
             with self.stream_lock:
                 self.is_ducked= False

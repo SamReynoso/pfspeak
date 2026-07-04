@@ -121,7 +121,7 @@ class Ollama(TTSStream):
         try:
             while self.streaming:
 
-                self.status.line = "waiting"
+                self.status.line += "| waiting"
                 model, prompt = self.jobs.get()
                 if model is False or prompt is False:
                     continue
@@ -133,7 +133,7 @@ class Ollama(TTSStream):
                 resp = OllamaRequest(model=model, stream=True).request(prompt)
                 gen = resp.iter_lines(decode_unicode=True)
 
-                self.status.line = f"Ollama: {time() - request_start} seconds"
+                self.status.line += f"| {time() - request_start} seconds"
 
                 for line in gen:
 
@@ -145,7 +145,7 @@ class Ollama(TTSStream):
                     candidate = buffer + text
                     if len(candidate) > buffer_size:
                         self.request(buffer)
-                        self.status.line = f"buffer sent: {len(buffer)}"
+                        self.status.line += f"| buffer sent: {len(buffer)}"
                         buffer = text
                     else:
                         buffer = candidate
@@ -174,7 +174,7 @@ class Hook(TTSStream):
         self.status = factory("Hook")
 
     def speak(self, line: str, voice: str, speed: float = 1.0):
-        self.status.line = "Hook: routing request to device session"
+        self.status.line += "| Hook: routing request to device session"
         self.voice = voice
         self.speed = speed
         assert self.callback
@@ -199,7 +199,7 @@ class Fifo(TTSStream):
             if not self.path.exists():
                 os.mkfifo(self.path)
             fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-            self.status.line = "Device: Fifo online"
+            self.status.line += "| Device: Fifo online"
             self.streaming = True
             with open(fd, "r") as fifo:
                 while self.streaming:

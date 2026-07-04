@@ -13,15 +13,16 @@ requires-python = ">=3.11.0"
 
 dependencies = [
     "spacy",
-    "transformers",
-    "num2words",
-    "phonemizer",
     "huggingface_hub",
-    "misaki",
     "platformdirs",
-    "pydantic",
-    "torch",
+    "transformers",
+    "sherpa_onnx",
     "sounddevice",
+    "phonemizer",
+    "num2words",
+    "pydantic",
+    "misaki",
+    "torch",
 ]
 
 [project.scripts]

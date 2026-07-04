@@ -1,6 +1,6 @@
 import heapq
 import itertools
-import sounddevice
+from sounddevice import OutputStream
 from uuid import UUID
 from pfspeak.extra.voices import Voices
 from pfspeak.app.directories import build
@@ -14,8 +14,10 @@ from pfspeak.common.dataclasses import PfEvent, Playback
 from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
 from pfspeak.core.session import PfSession, STTSession, TTSSession
 
+
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
 PlaybackBuffer = list[Playback]
+
 
 class PfSpeak:
     """
@@ -54,7 +56,7 @@ class PfSpeak:
         self.__active: Playback | None = None
         self.__buffer: PlaybackBuffer = []
         self.__sequence = itertools.count()
-        self.__stream = None
+        self.__stream: OutputStream | None = None
 
     def streaming(self, *devices: InputStream):
         build(self.__app)
@@ -124,21 +126,20 @@ class PfSpeak:
 
         outdata.fill(0)
 
-        if self.__active is None:
-            if self.__buffer:
-                self.__active = heapq.heappop(self.__buffer)
-                if self.session:
-                    self.session.mute()
-            elif self.session:
-                self.session.unmute()
+        assert self.session
+        if self.__active and self.__buffer and self.__active > self.__buffer[0]:
+            active = heapq.heappop(self.__buffer)
+            heapq.heappush(self.__buffer, self.__active)
+            self.__active = active
+
+        elif self.__active is None and self.__buffer:
+            self.__active = heapq.heappop(self.__buffer)
+            self.session.mute()
+
+        elif self.__active is None:
             return
 
-        elif self.__buffer:
-            waiting = self.__buffer[0]
-            if waiting < self.__active:
-                heapq.heappush(self.__buffer, self.__active)
-                self.__active = heapq.heappop(self.__buffer)
-
+        assert self.__active
         start = self.__active.cursor
         stop = start + frames
         chunk = self.__active.waveform[start:stop]
@@ -148,11 +149,12 @@ class PfSpeak:
 
         if self.__active.cursor >= len(self.__active.waveform):
             self.__active = None
+            self.session.unmute()
 
     def __ensure_stream(self, samplerate: int):
         if self.__stream is not None:
             return
-        self.__stream = sounddevice.OutputStream(
+        self.__stream = OutputStream(
                 samplerate=samplerate,
                 channels=1,
                 dtype="float32",
