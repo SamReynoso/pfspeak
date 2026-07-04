@@ -1,10 +1,11 @@
 from threading import Lock
+from collections import deque
 from pfspeak.common.dataclasses import (
         Audio,
-        AudioChunk,
         PfEvent,
         PfStatus,
-        Recording
+        Recording,
+        AudioChunk,
         )
 from pfspeak.common.types import DifferedDef
 from pfspeak.common.g2p import Graphemes2Phonemes
@@ -24,7 +25,7 @@ class ListenBuffer:
         self.status = PfStatus()
         self.stream_lock = Lock()
         self.recognizer = recognizer
-        self._lookback: Audio = Audio()
+        self._lookback: deque = deque()
         self.add_event: DifferedDef = None
         self.recording: Recording = Recording()
 
@@ -32,20 +33,24 @@ class ListenBuffer:
         self.stream = self.recognizer.create_stream()
 
     def duck(self):
-        print("ducking microphone for listening buffer")
-        self.__ducked = True
+        print("Buffer: ducking microphone")
         self.reset_stream()
+        with self.stream_lock:
+            self.__ducked = True
 
     def unduck(self):
-        self.__ducked = False
+        print("Buffer: unducking microphone")
         self.reset_stream()
+        with self.stream_lock:
+            self.__ducked = False
 
     def reset_stream(self):
+        print("Buffer: resetting stream")
         with self.stream_lock:
-            self.recording = Recording()
             self.__create_stream()
+            self.recording = Recording()
 
-    def send_event(self, service: PfEvent.EventTypes):
+    def __send_event(self, service: PfEvent.EventTypes):
         assert self.recording
         assert self.add_event
         self.add_event(
@@ -58,24 +63,20 @@ class ListenBuffer:
                     )
                 )
 
-    def recording_updated(self) -> None:
+    def __recording_updated(self) -> None:
         if self.__ducked:
-            return
+            service = PfEvent.EventTypes.DUCK
         else:
             service = PfEvent.EventTypes.STT
-
         with self.stream_lock:
-            self.send_event(service)
+            self.__send_event(service)
 
     def factory(self, samplerate: int):
         self.__create_stream()
 
         def lookback() -> Audio:
-            if self.LOOKBACH_BLOCKS < len(self._lookback):
-                audio = Audio(self._lookback[-self.LOOKBACH_BLOCKS:])
-            else:
-                audio = self._lookback
-            self._lookback = Audio()
+            audio = Audio(self._lookback)
+            self._lookback.clear()
             return audio
 
         def decode_stream_to_text(chunk):
@@ -85,7 +86,10 @@ class ListenBuffer:
             return self.recognizer.get_result(self.stream)
 
         def sideeffects(chunk):
+            if len(self._lookback) == self.LOOKBACH_BLOCKS:
+                self._lookback.popleft()
             self._lookback.append(chunk)
+            assert len(self._lookback) <= self.LOOKBACH_BLOCKS
             self.status.received += 1
 
         def compare_text(text: str):
@@ -93,13 +97,12 @@ class ListenBuffer:
                 tokens = self.g2p(text)
                 with self.stream_lock:
                     self.recording.revise(tokens, lookback())
-                self.recording_updated()
+                self.__recording_updated()
 
         def callback(chunk: AudioChunk):
-            if not self.__ducked:
-                text = decode_stream_to_text(chunk).strip()
-                sideeffects(chunk)
-                compare_text(text)
+            text = decode_stream_to_text(chunk).strip()
+            sideeffects(chunk)
+            compare_text(text)
 
         return callback
 

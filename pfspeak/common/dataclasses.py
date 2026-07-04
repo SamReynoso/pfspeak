@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import deque
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
@@ -42,18 +43,6 @@ class PfEvent:
     device: InputStream | None
 
     finalized: bool = False
-    _finalize_self: Callable | None= None
-
-    def finalize(self):
-        if self.service != PfEvent.EventTypes.STT:
-            raise RuntimeError(
-                    "PfEvent.inalize method not available for TTS events"
-                    )
-        elif self._finalize_self is None:
-            raise ValueError("PfEvent.finalize was never set")
-        assert self.device
-        self.finalized = True
-        self._finalize_self(self)
 
     @property
     def types(self):

@@ -12,7 +12,7 @@ def older_than(event: PfEvent, seconds: float) -> bool:
     return time.time() - event.recording.audio[0].end_time >= seconds
 
 
-def last_changed(event: PfEvent, seconds: float) -> bool:
+def unchanged_for(event: PfEvent, seconds: float) -> bool:
     if event.service == event.types.TICKET:
         raise RuntimeError("Operation not permitted for events type 'ticket'")
     return time.time() - event.recording.audio[-1].end_time >= seconds
@@ -68,12 +68,13 @@ def trim_end(event: PfEvent, number: int) -> str:
     return " ".join(event.recording.text.split(" ")[: - number])
 
 
-def alphanumeric(event: PfEvent):
-    return "".join(ch.lower() for ch in event.recording.text if ch.isalnum())
+def alphanumeric(event: PfEvent) -> str:
+    text = event.recording.text.lower()
+    return "".join(ch for ch in text if ch.isalnum() or ch.isspace())
 
 
 def ends_with_phrase(event: PfEvent, phrase: str) -> bool:
-    event_words = [w.lower() for w in alphanumeric(event).split(" ")]
+    event_words = alphanumeric(event).split(" ")
     phrase_words = [w.lower() for w in phrase.split(" ")]
     if len(phrase_words) > len(event_words):
         return False

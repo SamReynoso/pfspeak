@@ -20,7 +20,6 @@ class OllamaRequest:
         return f"{self.protocol}://{self.host}:{self.port}"
 
     def request(self, prompt: str):
-        print("OLLAMAREQUEST----------------")
         url = self.url + self.generate
         json ={
                 "model": self.model,
@@ -28,6 +27,7 @@ class OllamaRequest:
                 "stream": self.stream,
                 "keep_alive": "30m",
                 }
+        print("Ollama Request: sent")
         r = requests.post(url, json=json, stream=self.stream)
         r.raise_for_status()
         return r

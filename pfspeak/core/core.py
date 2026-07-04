@@ -27,6 +27,7 @@ class PfSpeak:
         self.__sd_stream = None
         self.buffer = deque()
         self.samplerates = deque()
+        self.__convo = {}
 
     def streaming(self, *devices: InputStream):
         build(self.__app)
@@ -59,9 +60,12 @@ class PfSpeak:
 
 
     def play(self, event: PfEvent | None = None, kill: bool = False):
+        assert self.session
+
         if kill:
             sounddevice.stop()
-            self.buffer = deque()
+            self.buffer.clear()
+            self.session.unmute()
             return
 
         if event:
@@ -70,31 +74,31 @@ class PfSpeak:
 
         if self.__sd_stream:
             if self.__sd_stream.active:
-                print("skipping while stream is active")
                 return
+            elif not self.buffer:
+                self.session.unmute()
+                self.__sd_stream = None
 
         if not self.buffer:
             return 
 
+        print("playing next segment")
+
         waveform = self.buffer.popleft()
         samplerate = self.samplerates.popleft()
+        self.session.mute()
         sounddevice.play(waveform, samplerate=samplerate)
         self.__sd_stream = sounddevice.get_stream()
 
-    def print(self, event: PfEvent, clear: int = False) -> None:
-        if clear:
-            print("\033[2J\033[H", end="")
+    def print(self, event: PfEvent) -> None:
+        print("\033[2J\033[H", end="")
+        self.__convo[(event.service, event.device_id)] = event
+        for identity, event in self.__convo.items():
+            print("-" * 3, identity[0], identity[1], "-" * 3)
+            print(event.recording.text)
+            print()
 
-        tokens = event.recording.tokens
 
-        if len(event.recording.text):
-            print("-" * 32) 
-            line = TokenList()
-            for token in tokens:
-                if len(line) < 64:
-                    line.append(token)
-                else:
-                    print(line.text)
-                    line = TokenList()
-            if line:
-                print(line.text)
+        for _ in range(5):
+            print()
+        print("-" * 25)

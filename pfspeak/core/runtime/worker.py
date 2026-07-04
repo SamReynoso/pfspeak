@@ -39,7 +39,8 @@ def worker(host: str, port: int):
         if conn.poll(timeout=.02):
             message = conn.recv()
             if message.op == "stop":
-                print("TTS worker: exited normally")
+                print("TTS worker: exiting normally")
+                conn.send(message)
                 return
             if current_job and current_job.device_id == message.device_id:
                 current_job.tokens.tokens += message.tokens.tokens
@@ -76,7 +77,7 @@ def worker(host: str, port: int):
                       )
         elif jobs:
             current_job = jobs.popleft()
-            gen = Driver.chunks(current_job.tokens, model.max_phonemes)
+            gen = Driver.chunks(current_job.tokens, 254)
 
 
 def start():
@@ -113,14 +114,13 @@ def _prepare_worker_launch():
     return host, port, args
 
 
-def shutdown(conn, process):
-
-    conn.send(WorkerMessageBase(op="stop"))
+def join(process):
 
     try:
         process.wait(timeout=2)
+        print("TTS worker: shutdown normally")
     except subprocess.TimeoutExpired:
         process.terminate()
         process.wait(timeout=2)
+        print("TTS worker: terminated")
 
-    print("TTS worker: shutdown Normally")

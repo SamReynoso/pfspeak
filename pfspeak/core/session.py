@@ -76,14 +76,7 @@ class STTSession(BaseSession):
 
     def bind_event_queue(self, put: Callable) -> None:
 
-        def finalize(event: PfEvent) -> None:
-            device = self.devices[event.device_id]
-            device._current = None
-            self.buffer.reset_stream()
-            print("buffer reset")
-
         def emit(event: PfEvent) -> None:
-            event._finalize_self = finalize
             put(event)
 
         self.buffer.add_event = emit
@@ -201,8 +194,9 @@ class PfSession:
             try:
                 event: PfEvent = self.__events.get(timeout=.02)
                 device = self.__devices[event.device_id]
-                device._current = event
                 event.device = device
+                if event.service != PfEvent.EventTypes.DUCK:
+                    device._current = event
                 yield event
 
             except Empty:
@@ -226,7 +220,14 @@ class PfSession:
         session = self.__sessions_map[device.uuid]
         if session.STRATEGY != InProcess:
             raise RuntimeError("Only in-process devices can be reset")
+
         session.buffer.reset_stream()
+        device._current = None
+
+    def finalize(self, event: PfEvent):
+        assert event.device
+        event.device.recordings.append(event.recording)
+        self.reset(event.device)
 
     def __enter__(self, *_) -> PfSession:
         print("PfSession: starting")

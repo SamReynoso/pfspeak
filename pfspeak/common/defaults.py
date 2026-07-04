@@ -28,7 +28,8 @@ REMOTES = {
 
 IPC_AUTHKEY = b"pfspeak"
 
-DEFAULT_LLM = "qwen3:0.6b"
+# DEFAULT_LLM = "qwen3:0.6b"
+DEFAULT_LLM = "qwen3-coder:latest"
 
 ALIASES = {
         'en-us': 'a',

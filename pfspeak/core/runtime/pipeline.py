@@ -11,36 +11,35 @@ from pfspeak.common.dataclasses import Sentinel, PfStatus, Prediction
 
 
 class PipelineConnections:
-    child = None
-    conn = None
 
-    def __init__(self,
-                 send_to,
-                 receive_back,
-                 ) -> None:
-        self.send_to = Thread(target=send_to, daemon=True)
+    def __init__(self, send_out, receive_back) -> None:
         self.receive_back = Thread(target=receive_back, daemon=True)
+        self.send_out = Thread(target=send_out, daemon=True)
+        self.conn = None
+        self.child = None
 
     def start(self):
         print("Pipeline: initualizing connectons")
         self.child, self.conn = worker.start()
-        self.send_to.start()
         self.receive_back.start()
+        self.send_out.start()
 
     def close(self):
         assert self.child
-        worker.shutdown(self.conn, self.child)
-        self.send_to.join()
+        worker.join(self.child)
         self.receive_back.join()
+        self.send_out.join()
         print("Pipeline: works shutdown")
 
-    def send(self, value):
+    @property
+    def send(self):
         assert self.conn
-        self.conn.send(value)
+        return self.conn.send
 
+    @property
     def recv(self):
         assert self.conn
-        return self.conn.recv()
+        return self.conn.recv
 
 
 class PfPipeline:
@@ -62,7 +61,7 @@ class PfPipeline:
 
         self.speed = 1
         self.voice = Voices.EN.AF_HEART
-        self.connections = PipelineConnections(self.send_to, self.receive_back)
+        self.connections = PipelineConnections(self.send_out, self.receive_back)
         print("Pipeline: initualized")
 
     def __update_status(self, message: WorkerMessage):
@@ -73,8 +72,8 @@ class PfPipeline:
         self.status.received+= len(prediction.tokens)
         self.add_event(prediction.event(self.status))
 
-    def send_to(self):
-        while self.streaming:
+    def send_out(self):
+        while True:
             msg: WorkerMessage | Sentinel = self.buffer.get()
             self.connections.send(msg)
             if isinstance(msg, Sentinel):
@@ -83,30 +82,29 @@ class PfPipeline:
 
     def receive_back(self):
         assert self.add_event
-        while self.streaming:
-            prediction: Prediction = self.connections.recv()
+        while True:
+            prediction: Prediction | Sentinel = self.connections.recv()
+            if isinstance(prediction, Sentinel):
+                return
             self.__post_recording(prediction)
 
     def start(self):
         print("Pipeline: starting")
-        self.streaming = True
         self.connections.start()
         print("Pipeline: READY")
 
     def stop(self):
         print("Pipeline: stopping")
-        self.streaming = False
         self.buffer.put(Sentinel())
         self.connections.close()
         print("Pipeline: stopped")
 
     def factory(self):
-        print("Pipeline: Device assigned")
+        print("Pipeline: device assigned")
 
         def callback(request: WorkRequest):
             voice = self.voice if request.voice is None else request.voice
             message = request.make(self.g2p(request.text), voice=voice)
-            assert self.add_event
             self.buffer.put(message)
 
         return callback

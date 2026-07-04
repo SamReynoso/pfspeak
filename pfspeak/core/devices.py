@@ -1,5 +1,6 @@
 import os
 import json
+import sys
 from time import time
 import uuid
 import socket
@@ -63,7 +64,6 @@ class TTSStream(InputStream):
     SESSIONIZER = TTSSession
 
     def request(self, text: str):
-        print(text)
         req = WorkRequest(
                 device_id=self.uuid,
                 speed=self.speed,
@@ -86,8 +86,9 @@ class Ollama(TTSStream):
                  ) -> None:
         super().__init__()
         self.model = model
-        self.requests = Queue()
+        self.jobs = Queue()
         self.callback = callback
+        self.last = ""
 
     def ping(self, timeout: float = 10.0) -> bool:
         model = ""
@@ -107,39 +108,45 @@ class Ollama(TTSStream):
         elif prompt is None:
             raise ValueError("Ollama adapter requires a prompt or PfEvent")
         model = model or self.model
-        self.requests.put((model, prompt))
+        self.jobs.put((model, prompt))
 
     def run(self):
         try:
             print("Device: Ollama online")
             while self.streaming:
-                model, prompt = self.requests.get()
+                model, prompt = self.jobs.get()
                 if model is False or prompt is False:
                     continue
-                request_start = time()
-                ollama = OllamaRequest(model=model, stream=True)
-                response = ollama.request(prompt)
-                print(f"Ollama: first bytes took {time() - request_start} seconds")
 
+                full = ""
                 buffer = ""
-                buffer_size  = 600
-                for line in response.iter_lines(decode_unicode=True):
+                buffer_size  = 300
+                request_start = time()
+                resp = OllamaRequest(model=model, stream=True).request(prompt)
+                gen = resp.iter_lines(decode_unicode=True)
+
+                print(f"Ollama: {time() - request_start} seconds")
+
+                for line in gen:
+
                     if not line:
                         continue
-                    event = json.loads(line)
-                    if text := event.get("response"):
+                    if not (text := json.loads(line).get("response")):
+                        continue
 
-                        if len(buffer + " " + text) > buffer_size:
-                            self.request(buffer)
-                            buffer = ""
-                            buffer *= 2
-                            print("buffer size", buffer_size)
-
-                        buffer += text
-
+                    candidate = buffer + text
+                    if len(candidate) > buffer_size:
+                        self.request(buffer)
+                        print("======= buffer sent - buffer size:", len(buffer))
+                        buffer = text
+                    else:
+                        buffer = candidate
+                    full += text
 
                 if buffer:
                     self.request(buffer)
+                self.last = full
+                sys.stderr.write(full + "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
 
         except Exception as e:
             assert self.exceptions
@@ -147,7 +154,7 @@ class Ollama(TTSStream):
 
     def stop(self):
         self.streaming = False
-        self.requests.put((False, False))
+        self.jobs.put((False, False))
         if self.thread:
             self.thread.join()
 
