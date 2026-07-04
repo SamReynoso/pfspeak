@@ -81,24 +81,17 @@ from word2number import w2n
 from pfspeak import PfSpeak
 from pfspeak.extra import events
 from pfspeak.common import dataclasses
-from pfspeak.core.devices import Fifo, Tcp
+from pfspeak.core.session import PfSession
 from pfspeak.core import Microphone, Ollama
 from pfspeak.common.dataclasses import PfEvent
 from pfspeak.common.defaults import DEFAULT_LLM
 from pfspeak.core.runtime.buffer import ListenBuffer
 from pfspeak.core.runtime.pipeline import PfPipeline
-from pfspeak.core.runtime.inference import SpeechModel
-from pfspeak.core.session import PfSession, STTSession, TTSSession
 
 
 class Mem:
 
     CONTEXT = [
-#            SpeechModel,
-#            STTSession,
-#            TTSSession,
-#            Fifo,
-#            Tcp,
             dataclasses,
             Ollama,
             Microphone,

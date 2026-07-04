@@ -1,5 +1,6 @@
 from threading import Lock
 from collections import deque
+from typing import Callable
 from pfspeak.common.dataclasses import (
         Audio,
         PfEvent,
@@ -21,7 +22,7 @@ class ListenBuffer:
                  g2p: Graphemes2Phonemes,
                  ) -> None:
         self.g2p = g2p
-        self.__ducked = False
+        self.is_ducked = False
         self.status = PfStatus()
         self.stream_lock = Lock()
         self.recognizer = recognizer
@@ -33,19 +34,20 @@ class ListenBuffer:
         self.stream = self.recognizer.create_stream()
 
     def duck(self):
-        print("Buffer: ducking microphone")
-        self.reset_stream()
-        with self.stream_lock:
-            self.__ducked = True
+        if not self.is_ducked:
+            self.status.line = "ducked"
+            self.reset_stream()
+            with self.stream_lock:
+                self.is_ducked= True
 
     def unduck(self):
-        print("Buffer: unducking microphone")
-        self.reset_stream()
-        with self.stream_lock:
-            self.__ducked = False
+        if self.is_ducked:
+            self.status.line = "online"
+            self.reset_stream()
+            with self.stream_lock:
+                self.is_ducked= False
 
     def reset_stream(self):
-        print("Buffer: resetting stream")
         with self.stream_lock:
             self.__create_stream()
             self.recording = Recording()
@@ -64,7 +66,7 @@ class ListenBuffer:
                 )
 
     def __recording_updated(self) -> None:
-        if self.__ducked:
+        if self.is_ducked:
             service = PfEvent.EventTypes.DUCK
         else:
             service = PfEvent.EventTypes.STT
@@ -105,6 +107,9 @@ class ListenBuffer:
             compare_text(text)
 
         return callback
+
+    def bind_status(self, factory: Callable):
+        self.status = factory("Buffer")
 
     def stop(self):
         self.stream.close()

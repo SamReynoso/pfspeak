@@ -74,6 +74,9 @@ class STTSession(BaseSession):
         g2p = Graphemes2Phonemes()
         self.buffer = ListenBuffer(recognizer, g2p)
 
+    def bind_status(self, factory: Callable):
+        self.buffer.bind_status(factory)
+
     def bind_event_queue(self, put: Callable) -> None:
 
         def emit(event: PfEvent) -> None:
@@ -115,6 +118,9 @@ class TTSSession(BaseSession):
     def duck(self) -> None: ...
     def unduck(self) -> None: ...
 
+    def bind_status(self, factory: Callable):
+        self.pipeline.bind_status(factory)
+
     def bind_event_queue(self, put: Callable) -> None:
 
         def emit(event: PfEvent):
@@ -148,13 +154,22 @@ class PfSession:
         self.__events = Queue()
         self.__exceptions = Queue()
         self.__devices: dict[UUID, InputStream] = {}
+        self.status = PfStatus()
+        self.statuses: dict[str, PfStatus] = {"Session": self.status}
         for device in devices:
             self.add_device(device)
+
+    def register_status(self, name: str):
+        status = PfStatus()
+        self.statuses[name] = status
+        return status
 
     def add_device(self, device: InputStream) -> None:
         if device.uuid in self.__devices:
             raise RuntimeError("Devices can only be added to a session once")
+
         self.__devices[device.uuid] = device
+        device.bind_status(self.register_status)
 
         if device.SESSIONIZER.STRATEGY == WorkerProcess:
             if self.__workers:
@@ -163,12 +178,14 @@ class PfSession:
                 session = device.SESSIONIZER()
                 self.__workers.append(session)
                 self.__sessions.append(session)
+                session.bind_status(self.register_status)
                 session.bind_event_queue(self.__events.put)
                 session.bind_exceptions(self.__exceptions.put)
 
         elif device.SESSIONIZER.STRATEGY == InProcess:
             session = device.SESSIONIZER()
             self.__sessions.append(session)
+            session.bind_status(self.register_status)
             session.bind_event_queue(self.__events.put)
             session.bind_exceptions(self.__exceptions.put)
 
@@ -215,6 +232,7 @@ class PfSession:
     def unmute(self) -> None:
         for session in self.__sessions:
             session.unduck()
+        self.status.line = "waiting"
 
     def reset(self, device: InputStream) -> None:
         session = self.__sessions_map[device.uuid]
@@ -227,6 +245,7 @@ class PfSession:
     def finalize(self, event: PfEvent):
         assert event.device
         event.device.recordings.append(event.recording)
+        self.status.line = "event finalized"
         self.reset(event.device)
 
     def __enter__(self, *_) -> PfSession:
@@ -243,5 +262,3 @@ class PfSession:
         for session in self.__sessions:
             session.__exit__(*_)
         self.__streams_active = False
-        print("PfSession: shutdown complete")
-        print("BYE")

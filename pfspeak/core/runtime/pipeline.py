@@ -1,5 +1,6 @@
 from queue import Queue
 from threading import Thread
+from typing import Callable
 from pfspeak.extra.voices import Voices
 from pfspeak.core.runtime import worker
 from pfspeak.core.repo import SpeechRepo
@@ -70,12 +71,14 @@ class PfPipeline:
     def __post_recording(self, prediction: Prediction):
         assert self.add_event
         self.status.received+= len(prediction.tokens)
+        self.status.line = "synthesis received"
         self.add_event(prediction.event(self.status))
 
     def send_out(self):
         while True:
             msg: WorkerMessage | Sentinel = self.buffer.get()
             self.connections.send(msg)
+            self.status.line = "worker message sent"
             if isinstance(msg, Sentinel):
                 return
             self.__update_status(msg)
@@ -108,3 +111,6 @@ class PfPipeline:
             self.buffer.put(message)
 
         return callback
+
+    def bind_status(self, factory: Callable):
+        self.status = factory("Pipeline")

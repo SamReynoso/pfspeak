@@ -1,16 +1,16 @@
 from __future__ import annotations
-from collections import deque
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
 
 from uuid import UUID
 from enum import StrEnum
 from numpy import array, float32
-from dataclasses import dataclass
 from difflib import SequenceMatcher
+from dataclasses import dataclass, field
 from pfspeak.extra.voices import VoiceEnum
-from typing import Callable, Iterable, Literal, overload
+from typing import Iterable, Literal, overload
 from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
 
@@ -18,12 +18,23 @@ from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 class PfStatus:
     sent: int = 0
     received: int = 0
+    line: str = ""
 
 
 @dataclass(frozen=True)
 class CudaSupport:
     available: bool
     supported: bool
+
+
+@dataclass(order=True)
+class Playback:
+    priority: int
+    sequence: int
+
+    waveform: NDArray[Float32] = field(compare=False)
+    samplerate: int = field(compare=False)
+    cursor: int = field(default=0, compare=False)
 
 
 @dataclass(slots=True)

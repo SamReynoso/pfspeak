@@ -2,6 +2,7 @@ import os
 import json
 import sys
 from time import time
+from typing import Callable
 import uuid
 import socket
 from pathlib import Path
@@ -14,7 +15,7 @@ from pfspeak.common.requests import OllamaRequest
 from pfspeak.core.session import STTSession, TTSSession
 from pfspeak.common.types import AudioCallback, PathLike
 from pfspeak.common.types import DifferedDef, VoidableDef
-from pfspeak.common.dataclasses import AudioChunk, PfEvent, TokenList, WorkRequest
+from pfspeak.common.dataclasses import AudioChunk, PfEvent, WorkRequest
 
 
 class InputStream(ABC):
@@ -47,6 +48,9 @@ class InputStream(ABC):
 
     @abstractmethod
     def run(self): ...
+
+    @abstractmethod
+    def bind_status(self, factory: Callable): ...
 
     def start(self):
         self.thread = Thread(target=self.run, daemon=True)
@@ -90,6 +94,9 @@ class Ollama(TTSStream):
         self.callback = callback
         self.last = ""
 
+    def bind_status(self, factory: Callable):
+        self.status = factory("Ollama")
+        
     def ping(self, timeout: float = 10.0) -> bool:
         model = ""
         return OllamaRequest(model).ping(timeout)
@@ -112,8 +119,9 @@ class Ollama(TTSStream):
 
     def run(self):
         try:
-            print("Device: Ollama online")
             while self.streaming:
+
+                self.status.line = "waiting"
                 model, prompt = self.jobs.get()
                 if model is False or prompt is False:
                     continue
@@ -125,7 +133,7 @@ class Ollama(TTSStream):
                 resp = OllamaRequest(model=model, stream=True).request(prompt)
                 gen = resp.iter_lines(decode_unicode=True)
 
-                print(f"Ollama: {time() - request_start} seconds")
+                self.status.line = f"Ollama: {time() - request_start} seconds"
 
                 for line in gen:
 
@@ -137,7 +145,7 @@ class Ollama(TTSStream):
                     candidate = buffer + text
                     if len(candidate) > buffer_size:
                         self.request(buffer)
-                        print("======= buffer sent - buffer size:", len(buffer))
+                        self.status.line = f"buffer sent: {len(buffer)}"
                         buffer = text
                     else:
                         buffer = candidate
@@ -146,7 +154,6 @@ class Ollama(TTSStream):
                 if buffer:
                     self.request(buffer)
                 self.last = full
-                sys.stderr.write(full + "\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n")
 
         except Exception as e:
             assert self.exceptions
@@ -163,8 +170,11 @@ class Hook(TTSStream):
         super().__init__()
         self.callback: VoidableDef = callback 
 
+    def bind_status(self, factory: Callable):
+        self.status = factory("Hook")
+
     def speak(self, line: str, voice: str, speed: float = 1.0):
-        print("Hook: routing request to device session")
+        self.status.line = "Hook: routing request to device session"
         self.voice = voice
         self.speed = speed
         assert self.callback
@@ -180,13 +190,16 @@ class Fifo(TTSStream):
         self.callback: VoidableDef = callback 
         self.streaming = False
 
+    def bind_status(self, factory: Callable):
+        self.status = factory("Fifo")
+
     def run(self):
         try:
             assert self.callback
             if not self.path.exists():
                 os.mkfifo(self.path)
             fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-            print("Device: Fifo online")
+            self.status.line = "Device: Fifo online"
             self.streaming = True
             with open(fd, "r") as fifo:
                 while self.streaming:
@@ -205,12 +218,15 @@ class Tcp(TTSStream):
         self.port = port
         self.callback=callback
 
+    def bind_status(self, factory: Callable):
+        self.status = factory("Tcp")
+
     def run(self):
         try:
             assert self.callback
             with socket.socket() as server:
                 conn, _ = server.accept()
-                print("Device: Tcp online")
+                self.status.line = "Device: Tcp online"
                 while self.streaming:
                     with conn:
                         file = conn.makefile()
@@ -235,6 +251,9 @@ class Microphone(STTStream):
         self.samplerate = samplerate
         self.callback: DifferedDef = callback
 
+    def bind_status(self, factory: Callable):
+        self.status = factory("Microphone")
+
     def run(self):
         try:
             assert self.callback
@@ -244,7 +263,7 @@ class Microphone(STTStream):
                                                self.blocksize,
                                                AudioChannels.MONO)
             self.stream.start()
-            print("Device: Microphone online")
+            self.status.line = "online"
         except Exception as e:
             assert self.exceptions
             self.exceptions(e)
