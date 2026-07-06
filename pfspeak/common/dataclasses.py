@@ -1,15 +1,16 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
-
-import numpy
-
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
 
+import soxr
+import numpy
 from uuid import UUID
 from enum import StrEnum
 from numpy import array, float32
 from difflib import SequenceMatcher
+from time  import time, monotonic_ns
 from dataclasses import dataclass, field
 from pfspeak.extra.voices import VoiceEnum
 from typing import Iterable, Literal, overload
@@ -69,7 +70,7 @@ class PfEvent:
 class WorkRequest:
     device_id: UUID
     tokens: TokenList
-    voice: VoiceEnum | str | None = None
+    voice: VoiceEnum | str
     speed: float = 1 
 
     def __repr__(self) -> str:
@@ -253,10 +254,12 @@ class AudioChunk:
     device_id: UUID
     waveform: NDArray[Float32]
     samplerate: int
-    start_time: float
+    start_time: float = field(default_factory=time)
+    created_ns: int = field(default_factory=monotonic_ns)
 
     _rms: float | None = None
     _peak: float | None = None
+
 
     @property
     def rms(self):
@@ -270,7 +273,6 @@ class AudioChunk:
             self._peak = numpy.max(numpy.abs(self.waveform))
         return self._peak
 
-
     @property
     def duration(self) -> float:
         return self.waveform.shape[0] / self.samplerate
@@ -282,6 +284,19 @@ class AudioChunk:
     def __repr__(self) -> str:
         return (f"AudioChunk(start_time={self.start_time}, "
                 f"duration={self.duration})")
+
+    def resample(self, samplerate: int):
+        waveform = soxr.resample(
+                self.waveform,
+                in_rate=self.samplerate,
+                out_rate=samplerate)
+
+        return AudioChunk(
+                device_id=self.device_id,
+                waveform=waveform,
+                samplerate=samplerate,
+                start_time=self.start_time,
+                created_ns=self.created_ns)
 
 @dataclass(slots=True)
 class Prediction:

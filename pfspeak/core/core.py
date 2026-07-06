@@ -2,21 +2,20 @@ import heapq
 import itertools
 from uuid import UUID
 from sounddevice import OutputStream
+from pfspeak.app.directories import build
+from pfspeak.core.repo import RecognizerRepo, SpeechRepo
+from pfspeak.core.types import ServiceTypes
+from pfspeak.core.asset import RecognizerAsset, follow_policy
+from pfspeak.core.param import ListenParams
+from pfspeak.core.devices import Devices, Hook, InputStream
+from pfspeak.core.session import PfSession, SttBackend, TtsBackend
 from pfspeak.core.runtime import worker
 from pfspeak.core.runtime.pipeline import WorkerAdapter
 from pfspeak.extra.voices import Voices
-from pfspeak.app.directories import build
-from pfspeak.core.types import ServiceTypes
-from pfspeak.core.param import ListenParams
-from pfspeak.core.devices import InputStream
 from pfspeak.common.types import OptionalSpec
-from pfspeak.core.devices import Devices, Hook
 from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from pfspeak.common.dataclasses import PfEvent, Playback
-from pfspeak.core.asset import RecognizerAsset, follow_policy
 from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
-from pfspeak.core.session import PfSession, SttBackend, TtsBackend
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
@@ -24,30 +23,6 @@ PlaybackBuffer = list[Playback]
 
 
 class PfSpeak:
-    """
-    High-level entry point for creating speech applications.
-
-    PfSpeak provides a small convenience layer around the lower-level session
-    APIs.
-
-    Responsibilities include:
-
-    - preparing required speech assets
-    - constructing a PfSession from one or more devices
-    - managing optional text-to-speech playback
-    - exposing common debugging helpers
-
-    Typical usage:
-
-        pf = PfSpeak()
-        session = pf.streaming(Microphone(), Ollama())
-        for event in session:
-            pf.print(event)
-
-    Applications that require finer control may interact with PfSession
-    directly.
-    """
-
     voices = Voices
     devices = Devices
     AppSpec = AppSpec
@@ -92,9 +67,9 @@ class PfSpeak:
 
     def speak(self, text: str, voice: str, speed: int = 1):
         if not self.__device:
-            raise RuntimeError(
-                    "This session does not have a TTS worker running"
-                    )
+            msg = "This session does not have a TTS worker running"
+            raise RuntimeError(msg)
+
         self.__hook.voice = voice
         self.__hook.speed = speed
         self.__hook.adapter(text)
@@ -120,7 +95,7 @@ class PfSpeak:
 
         if kill:
             self.__buffer = []
-            self.session.unmute()
+            self.session.stt.unmute()
             return
 
         if event and event.recording:
@@ -128,8 +103,8 @@ class PfSpeak:
                         priority=priority,
                         sequence=next(self.__sequence),
                         waveform= event.recording.audio.to_waveform(),
-                        samplerate=event.recording.audio.samplerate,
-                        )
+                        samplerate=event.recording.audio.samplerate)
+
             heapq.heappush(self.__buffer, playback)
             self.__ensure_stream(playback.samplerate)
 
@@ -146,7 +121,7 @@ class PfSpeak:
 
         elif self.__active is None and self.__buffer:
             self.__active = heapq.heappop(self.__buffer)
-            self.session.mute()
+            self.session.stt.mute()
 
         elif self.__active is None:
             return
@@ -161,7 +136,7 @@ class PfSpeak:
 
         if self.__active.cursor >= len(self.__active.waveform):
             self.__active = None
-            self.session.unmute()
+            self.session.stt.unmute()
 
     def __ensure_stream(self, samplerate: int):
         if self.__stream is not None:
@@ -170,6 +145,6 @@ class PfSpeak:
                 samplerate=samplerate,
                 channels=1,
                 dtype="float32",
-                callback=self.__callback,
-                )
+                callback=self.__callback)
+
         self.__stream.start()

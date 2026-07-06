@@ -23,13 +23,9 @@ if __name__ == "__main__":
         from pfspeak.app.install import install
         install(pfconfig)
 
-    elif args.command == "listen":
-        from pfspeak.app.listen import listen
-        listen()
-
     elif args.command == "chat":
         from pfspeak.app.chat import chat
-        chat(args.model, args.voice)#, args.silence, args.min_words)
+        chat(args.model, args.voice, args.samplerate)#, args.silence, args.min_words)
 
 
     elif args.command == "speak":

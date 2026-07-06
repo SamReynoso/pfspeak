@@ -22,6 +22,7 @@ chat.add_argument("--model", default=DEFAULT_LLM, metavar="MODEL", help="Ollama 
 chat.add_argument("--voice", default="af_heart", metavar="VOICE", help="Kokoro voice to use for speech synthesis (default: %(default)s).")
 chat.add_argument("--silence", type=float, default=5.0, metavar="SECONDS", help="Seconds of silence before automatically finalizing speech.")
 chat.add_argument("--min-words", type=int, default=15, metavar="N", help="Minimum words required before sending speech to the language model.")
+chat.add_argument("--samplerate", type=int, metavar="SAMPLERATE", help="Input microphone samplerate")
 # chat.add_argument("--no-greeting", action="store_true", help="Disable the assistant greeting on startup.")
 #chat.add_argument("--clear", action="store_true", help="Clear the terminal before starting.")
 

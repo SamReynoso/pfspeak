@@ -77,8 +77,9 @@ set value unchanged timeout <seconds>
 
 import sys
 import inspect
+from time import time
 from pfspeak import PfSpeak
-from pfspeak.common.requests import OllamaRequest
+from pfspeak.core import devices
 from pfspeak.extra import events
 from pfspeak.common import dataclasses
 from pfspeak.core.session import PfSession
@@ -86,6 +87,7 @@ from pfspeak.core import Microphone, Ollama
 from pfspeak.common.dataclasses import PfEvent
 from pfspeak.common.defaults import DEFAULT_LLM
 from pfspeak.core.runtime import buffer, pipeline
+from pfspeak.common.requests import OllamaRequest
 
 
 class Mem:
@@ -93,11 +95,10 @@ class Mem:
     # The order matters
     CONTEXT = [
             dataclasses,
-            Ollama,
-            Microphone,
             buffer,
             pipeline,
             PfSession,
+            devices,
             PfSpeak,
             sys.modules[__name__],
             ]
@@ -121,24 +122,79 @@ class Mem:
         return self._memory
 
 
-def chat(model: str = DEFAULT_LLM, _: str = "af_heart") -> int:
+def chat(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> int:
 
+    api = OllamaRequest(model)
+    if not api.ping():
+        sys.stderr.write("Error: Unable to find local Ollama service\n")
+        return 1
+    api.pull()
 
-    microphone = Microphone(
-            #device="Built-in Audio Analog Stereo",
-            channels=1,
-            samplerate=16_000,
-            blocksize= 100)
+    ollama = Ollama(model, voice=voice)
+    microphone = Microphone(samplerate=samplerate)
     pf = PfSpeak()
-    # memory = Mem()
+    memory = Mem()
 
-    with pf.streaming(microphone) as session:
-        for event in session:
-            if event.service != event.types.TICKET:
-                print(event)
-            pass
-    return 1
+    with pf.streaming(microphone, ollama) as session:
+        for e in session:
 
+            pf.play()
+            if e.service == e.types.TICKET:
+                ...
+            else:
+                pf.print(e)
+
+            if e.service == e.types.DUCK:
+                if events.anywhere(e, "pizza moonlight"):
+                    pf.play(kill=True)
+                    session.reset(microphone)
+
+            if e.service == e.types.STT:
+
+                if events.ends_with_phrase(e, f"chat exit"):
+                    return 0
+
+                elif events.ends_with_phrase(e, f"chat finalize"):
+                    line = events.trim_end(e, 2)
+                    print(f"Chat: finallized ({line_ends(line)})")
+
+                    memory.append_user(line)
+                    session.finalize(e)
+                    ollama.adapter(prompt=memory.prompt())
+
+                elif events.ends_with_phrase(e, f"chat clear"):
+                    clear()
+                    session.reset(microphone)
+
+                elif events.ends_with_phrase(e, f"chat reset"):
+                    clear()
+                    session.reset(microphone)
+
+                elif events.ends_with_phrase(e, f"chat dump"):
+                    print(memory._memory)
+                    session.reset(microphone)
+
+            elif e.device == ollama:
+                memory.append_chat(e)
+                pf.play(e)
+
+            elif e := microphone.current:
+                assert e.service == e.types.STT, e.service
+                if events.unchanged_for(e, 5):
+                    if events.word_count(e) > 12:
+                        assert e.recording
+                        line =e.recording.text
+                        memory.append_user(line)
+
+                        print(f"Chat: words minimum met ({line_ends(line)})")
+
+                        ollama.adapter(prompt=memory.prompt())
+                    else:
+                        print(f"Chat: inactivity timeout")
+                    assert e.recording
+                    session.reset(microphone)
+
+        return 1
 
 
 def clear():

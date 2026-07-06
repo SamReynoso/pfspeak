@@ -8,6 +8,8 @@ from typing import Callable
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.dataclasses import (
         Prediction,
+        Sentinel,
+        WorkRequest,
         WorkerMessage,
         WorkerMessageBase)
 from multiprocessing import current_process
@@ -30,7 +32,7 @@ def worker(host: str, port: int):
     model = SpeechModel(DEFAULT_APP_SPEC, repo)
     model.load_model()
 
-    jobs: deque[WorkerMessage] = deque()
+    jobs: deque[WorkRequest] = deque()
 
     gen = None
     current_job = None
@@ -38,9 +40,8 @@ def worker(host: str, port: int):
     while True:
 
         if conn.poll(timeout=.02):
-            message = conn.recv()
-            if message.op == "stop":
-                print("TTS worker: exiting normally")
+            message: WorkRequest | Sentinel = conn.recv()
+            if isinstance(message, Sentinel):
                 conn.send(message)
                 return
             if current_job and current_job.device_id == message.device_id:

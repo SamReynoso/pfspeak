@@ -23,6 +23,7 @@ dependencies = [
     "pydantic",
     "misaki",
     "torch",
+    "soxr",
 ]
 
 [project.scripts]
