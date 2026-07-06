@@ -24,7 +24,7 @@ class Recognition:
     MAX_LOOKBACK = 99
 
     def __init__(self, device_id: UUID, stream) -> None:
-        self.currnt = ""
+        self.current = ""
         self.stream = stream
         self.device_id = device_id
         self.lookback: deque = deque()
@@ -35,8 +35,8 @@ class Recognition:
             self.lookback.popleft()
 
     def if_it_is_updated(self, text):
-        if text != self.currnt:
-            self.currnt = text
+        if text != self.current:
+            self.current = text
             return self
 
     def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):
@@ -56,8 +56,8 @@ class PredictionBank:
         return self.__predictions[device_id]
 
     def reset(self, device_id: UUID, recognizer: RecognizerAdapter):
-        predicion = Recognition(device_id, recognizer.create_stream())
-        self.__predictions[device_id] = predicion
+        prediction = Recognition(device_id, recognizer.create_stream())
+        self.__predictions[device_id] = prediction
 
     def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):
         device_id = chunk.device_id
@@ -83,7 +83,7 @@ class AudioRecognizer:
 
     def factory(self, recognizer: RecognizerAdapter):
         def callback(chunk: AudioChunk):
-            predicton = self.predictions.feed(chunk, recognizer)
-            if predicton:
-                self.add_prediction(predicton)
+            prediction = self.predictions.feed(chunk, recognizer)
+            if prediction:
+                self.add_prediction(prediction)
         return callback

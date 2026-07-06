@@ -37,7 +37,7 @@ class SttBackend(PfBackend):
     def get_or_create(self, prediction: Recognition) -> Recording:
 
         device_id = prediction.device_id
-        tokens, audio = self.g2p(prediction.currnt), Audio(prediction.lookback) 
+        tokens, audio = self.g2p(prediction.current), Audio(prediction.lookback) 
 
         if device_id in self.cycle:
             self.cycle[device_id].revise(tokens, audio)
@@ -158,7 +158,6 @@ class PfSession:
         return self
 
     def __exit__(self, *_):
-        print("Shutting down session")
         self.tts.pipeline.join()
         for device in self.devices.values():
             device.stop()

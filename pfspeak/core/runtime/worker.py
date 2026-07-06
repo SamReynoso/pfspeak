@@ -2,22 +2,27 @@ import os
 import sys
 import socket
 import subprocess
+from subprocess import Popen
 from time import sleep, time
 from collections import deque
-from typing import Callable
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.dataclasses import (
         Prediction,
         Sentinel,
-        WorkRequest,
-        WorkerMessage,
-        WorkerMessageBase)
+        WorkRequest)
+
 from multiprocessing import current_process
 from pfspeak.core.runtime.driver import Driver
+from multiprocessing.connection import Connection
 from pfspeak.common.defaults import IPC_AUTHKEY
 from pfspeak.common.defaults import DEFAULT_APP_SPEC 
 from pfspeak.core.runtime.inference import SpeechModel
 from multiprocessing.connection import Listener, Client
+
+
+PopWorkerOutput = tuple[Popen, Connection]
+
+
 
 
 def worker(host: str, port: int):
@@ -43,6 +48,7 @@ def worker(host: str, port: int):
             message: WorkRequest | Sentinel = conn.recv()
             if isinstance(message, Sentinel):
                 conn.send(message)
+                print("TTS worker: shutting down")
                 return
             if current_job and current_job.device_id == message.device_id:
                 current_job.tokens.tokens += message.tokens.tokens
@@ -81,11 +87,6 @@ def worker(host: str, port: int):
             current_job = jobs.popleft()
             gen = Driver.chunks(current_job.tokens, 254)
 
-from subprocess import Popen
-from multiprocessing.connection import Connection
-
-
-PopWorkerOutput = tuple[Popen, Connection]
 
 
 def start() -> PopWorkerOutput:

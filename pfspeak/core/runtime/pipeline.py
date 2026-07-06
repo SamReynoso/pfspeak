@@ -20,11 +20,11 @@ class PipelineConnections:
     def __init__(self,
                  worker: WorkerAdapter,
                  add_prediction: Callable,
-                 exceptons: Queue,
+                 exceptions: Queue,
                  ) -> None:
         self.worker = worker
         self.keep_alive = True
-        self.exceptions = exceptons
+        self.exceptions = exceptions
         self.request_queue = Queue()
         self.add_prediction = add_prediction
         self.send_out = self._as_thread(self.__send_out)

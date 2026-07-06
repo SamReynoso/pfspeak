@@ -54,12 +54,6 @@ chat finalize
 chat reset
     Discard the current recording.
 
-chat clear
-    Clear the terminal and discard the current recording.
-
-chat dump
-    Print the current conversation context.
-
 chat exit
     Exit the application.
 
@@ -77,7 +71,6 @@ set value unchanged timeout <seconds>
 
 import sys
 import inspect
-from time import time
 from pfspeak import PfSpeak
 from pfspeak.core import devices
 from pfspeak.extra import events
@@ -121,8 +114,11 @@ class Mem:
     def prompt(self):
         return self._memory
 
+DESCRIPTION = "PfSpeak Project Assistant"
 
-def chat(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> int:
+def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> int:
+
+    memory = Mem()
 
     api = OllamaRequest(model)
     if not api.ping():
@@ -133,8 +129,6 @@ def chat(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
     ollama = Ollama(model, voice=voice)
     microphone = Microphone(samplerate=samplerate)
     pf = PfSpeak()
-    memory = Mem()
-
     with pf.streaming(microphone, ollama) as session:
         for e in session:
 
@@ -157,21 +151,11 @@ def chat(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
                 elif events.ends_with_phrase(e, f"chat finalize"):
                     line = events.trim_end(e, 2)
                     print(f"Chat: finallized ({line_ends(line)})")
-
                     memory.append_user(line)
                     session.finalize(e)
                     ollama.adapter(prompt=memory.prompt())
 
-                elif events.ends_with_phrase(e, f"chat clear"):
-                    clear()
-                    session.reset(microphone)
-
                 elif events.ends_with_phrase(e, f"chat reset"):
-                    clear()
-                    session.reset(microphone)
-
-                elif events.ends_with_phrase(e, f"chat dump"):
-                    print(memory._memory)
                     session.reset(microphone)
 
             elif e.device == ollama:
@@ -180,20 +164,18 @@ def chat(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
 
             elif e := microphone.current:
                 assert e.service == e.types.STT, e.service
+                assert e.recording
                 if events.unchanged_for(e, 5):
                     if events.word_count(e) > 12:
-                        assert e.recording
-                        line =e.recording.text
+                        line = e.recording.text
                         memory.append_user(line)
 
-                        print(f"Chat: words minimum met ({line_ends(line)})")
+                        print(f"Chat: reqierment met ({line_ends(line)})")
 
                         ollama.adapter(prompt=memory.prompt())
                     else:
-                        print(f"Chat: inactivity timeout")
-                    assert e.recording
+                        print(f"Chat: timeout(inactivity)")
                     session.reset(microphone)
-
         return 1
 
 

@@ -1,6 +1,7 @@
 import sys
 from pfspeak.app import pfconfig
 from pfspeak.cli.parser import parser
+from pfspeak.extra.examples import EXAMPLES
 
 
 args = parser.parse_args()
@@ -23,17 +24,8 @@ if __name__ == "__main__":
         from pfspeak.app.install import install
         install(pfconfig)
 
-    elif args.command == "chat":
-        from pfspeak.app.chat import chat
-        chat(args.model, args.voice, args.samplerate)#, args.silence, args.min_words)
-
-
-    elif args.command == "speak":
-        from pfspeak.app.speak import serve
-        sys.exit(serve())
-
-    elif args.command == "test":
-        ...
+    elif args.command == "examples":
+        EXAMPLES[args.example].main()
 
     elif args.command == "import-check":
         ...

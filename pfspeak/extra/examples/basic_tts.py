@@ -2,7 +2,7 @@ from pfspeak import PfSpeak
 from pfspeak.core.devices import Fifo
 
 
-def basic_tts():
+def main():
     pf = PfSpeak()
     fifo = Fifo("./input.pipe")
 

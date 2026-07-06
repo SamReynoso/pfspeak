@@ -1,19 +1,19 @@
-from collections.abc import Generator
 import os
 import json
 import uuid
 import socket
 from time import sleep
 from pathlib import Path
+from typing import Iterable
 from threading import Thread
 from multiprocessing import Queue
 from abc import ABC, abstractmethod
-from typing import Callable, Iterable
-
+from collections.abc import Generator
 from pfspeak.common.dataclasses import (
         PfEvent,
         PfStatus,
         AudioChunk,
+        Sentinel,
         WorkRequest,
         )
 from pfspeak.extra.voices import VoiceEnum
@@ -22,7 +22,7 @@ from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.common.requests import OllamaRequest
 from pfspeak.core.session import SttBackend, TtsBackend
 from pfspeak.common.types import AudioCallback, PathLike
-from pfspeak.common.types import DifferedDef, VoidableDef
+from pfspeak.common.types import DeferrableDef, VoidableDef
 
 
 class StreamWorkers:
@@ -30,6 +30,7 @@ class StreamWorkers:
 
         self.worker = self.__as_thread(stream.worker, stream)
         self.monitor = self.__as_thread(stream.monitor, stream)
+        self.wake_up = stream.wake_up
 
     def __as_thread(self, job, stream: InputStream):
         def with_exception_handling():
@@ -40,6 +41,7 @@ class StreamWorkers:
                     raise
                 assert stream.exceptions
                 stream.exceptions.put(exc)
+            print("Job: exiting")
 
         return Thread(target=with_exception_handling, daemon=True)
 
@@ -48,6 +50,8 @@ class StreamWorkers:
         self.monitor.start()
 
     def join(self):
+        print("Workers: joining")
+        self.wake_up()
         self.worker.join()
         self.monitor.join()
 
@@ -56,16 +60,16 @@ class InputStream(ABC):
 
     BACKEND: type[TtsBackend] | type[SttBackend]
 
-    def __init__(self, callback: DifferedDef = None) -> None:
+    def __init__(self, callback: DeferrableDef = None) -> None:
         super().__init__()
 
         self.device_id = uuid.uuid4()
         self.status = PfStatus()
         self._streaming = False
 
-        self.request: Queue[str] = Queue()
+        self.request: Queue[str|Sentinel] = Queue()
         self.workers = StreamWorkers(self)
-        self.callback: DifferedDef = callback
+        self.callback: DeferrableDef = callback
         self.exceptions: Queue | None = None
 
         self._current: PfEvent | None = None
@@ -88,11 +92,15 @@ class InputStream(ABC):
     @abstractmethod
     def monitor(self): ...
 
+    @abstractmethod
+    def wake_up(self): ...
+
     def start(self):
         self.streaming = True 
         self.workers.start()
 
     def stop(self):
+        print("Device: shutting down")
         self.streaming = False
         self.workers.join()
 
@@ -103,8 +111,13 @@ class InputStream(ABC):
         self.stop()
 
 
-class EndOfResponse: ...
+class EndOfResponse:
+    def __repr__(self):
+        return "END OF RESPONSE"
+
+
 EOF = EndOfResponse()
+SENTINEL = Sentinel()
 
 class TTSStream(InputStream):
 
@@ -113,20 +126,23 @@ class TTSStream(InputStream):
     def __init__(self,
                  voice: VoiceEnum | str | None,
                  speed: float = 1,
-                 callback: DifferableTTS= None,
-                 g2p_bakend: Graphemes2Phonemes | None = None,
+                 callback: DeferrableDef = None,
+                 g2p_backend: Graphemes2Phonemes | None = None,
                  ) -> None:
         super().__init__(callback)
         self.voice = voice
         self.speed = speed
         self._text_buffer = ""
-        self.g2p = g2p_bakend or Graphemes2Phonemes()
+        self.g2p = g2p_backend or Graphemes2Phonemes()
         self.last = ""
 
     def monitor(self):
         assert self.callback
         while self.streaming:
-            line: str = self.request.get()
+            line: str | Sentinel = self.request.get()
+            if line is SENTINEL:
+                break
+            assert isinstance(line, str)
             self.last = line
             assert self.voice
             assert line, line
@@ -139,11 +155,13 @@ class TTSStream(InputStream):
                         )
                     )
 
-    def chunk(self, file: Iterable[str|EndOfResponse]):
+    def chunk(self, file: Iterable[str|EndOfResponse|Sentinel]):
         min_send_length = 1_024
         buffer = ""
         for line in file:
-            print(f"'{line}'")
+
+            if line is SENTINEL:
+                break
 
             if line is EOF:
                 if buffer:
@@ -154,36 +172,16 @@ class TTSStream(InputStream):
             assert isinstance(line, str)
             buffer += line
             if len(buffer) > min_send_length:
-                print("Ollama: working on batch - length:", len(buffer))
+                print("TTS input: working on batch - length:", len(buffer))
                 self.request.put(buffer)
                 buffer = ""
+        self.request.put(SENTINEL)
 
     def worker(self):
         self.chunk(self.as_file())
 
     @abstractmethod
-    def as_file(self) -> Iterable[str|EndOfResponse]: ...
-
-
-class Hook(TTSStream):
-    def __init__(self,
-                 speed: float = 1,
-                 voice: VoiceEnum | str | None = None,
-                 callback: DifferableTTS = None,
-                 g2p_bakend: Graphemes2Phonemes | None = None
-                 ) -> None:
-        super().__init__(voice, speed, callback, g2p_bakend)
-
-    def adapter(self, text):
-        self.request.put(text)
-
-    def as_file(self):
-        while True:
-            yield self.request.get()
-
-
-TTSCallback = Callable[[str, str, int], WorkRequest]
-DifferableTTS = TTSCallback | None
+    def as_file(self) -> Generator[str|EndOfResponse|Sentinel]: ...
 
 
 class Ollama(TTSStream):
@@ -191,12 +189,12 @@ class Ollama(TTSStream):
                  model: str,
                  voice: VoiceEnum | str | None = None,
                  speed: float = 1,
-                 callback: DifferableTTS = None,
-                 g2p_bakend: Graphemes2Phonemes | None = None
+                 callback: DeferrableDef = None,
+                 g2p_backend: Graphemes2Phonemes | None = None
                  ) -> None:
-        super().__init__(voice, speed, callback, g2p_bakend)
+        super().__init__(voice, speed, callback, g2p_backend)
         self.model = model
-        self.prompts: Queue[tuple[str, str]] = Queue()
+        self.prompts: Queue[tuple[str, str]|Sentinel] = Queue()
 
     def adapter(self,
                 event: PfEvent | None = None,
@@ -219,11 +217,14 @@ class Ollama(TTSStream):
         model = model or self.model
         self.prompts.put((model, prompt))
 
-    def as_file(self) -> Generator[str|EndOfResponse]:
+    def as_file(self) -> Generator[str|EndOfResponse|Sentinel]:
         print("ollama running")
-        while True:
-            model, prompt = self.prompts.get()
-            model = model or self.model
+        while self.streaming:
+            value = self.prompts.get()
+            if isinstance(value, Sentinel):
+                break
+            model = value[0] or self.model
+            prompt = value[1]
             resp = OllamaRequest(model=model, stream=True).request(prompt)
             for line in resp.iter_lines(decode_unicode=True):
                 if not line:
@@ -231,7 +232,10 @@ class Ollama(TTSStream):
                 if text := json.loads(line).get("response"):
                     yield text
             yield EOF
+        yield SENTINEL
 
+    def wake_up(self):
+        self.prompts.put(SENTINEL)
 
 
 class Fifo(TTSStream):
@@ -239,47 +243,88 @@ class Fifo(TTSStream):
                  path: PathLike,
                  voice: VoiceEnum | str | None = None,
                  speed: float = 1,
-                 callback: DifferableTTS = None,
-                 g2p_bakend: Graphemes2Phonemes | None = None
+                 callback: DeferrableDef = None,
+                 g2p_backend: Graphemes2Phonemes | None = None
                  ) -> None:
-        super().__init__(voice, speed, callback, g2p_bakend)
+        super().__init__(voice, speed, callback, g2p_backend)
         self.path = Path(path)
         self.callback: VoidableDef = callback 
 
-    def as_file(self) -> Generator[str|EndOfResponse]:
+    def as_file(self) -> Generator[str|EndOfResponse|Sentinel]:
         if not self.path.exists():
             os.mkfifo(self.path)
-        fd = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-        with open(fd, "r") as fifo:
-            while True:
+        with open(self.path, "r") as fifo:
+            while self.streaming:
                 for line in fifo:
                     yield line
                 yield EOF
+        yield SENTINEL
+
+    def wake_up(self) -> None:
+        with open(self.path, "w"):
+            return None
 
 
 class Tcp(TTSStream):
     def __init__(self,
-                 port=8877,
-                 host="127.0.0.1",
-                 speed: float = 1,
-                 callback: DifferableTTS = None,
+                 port: int =24024,
+                 host: str ="127.0.0.1",
                  voice: VoiceEnum | str | None = None,
-                 g2p_bakend: Graphemes2Phonemes | None = None
+                 speed: float = 1,
+                 callback: DeferrableDef = None,
+                 g2p_backend: Graphemes2Phonemes | None = None
                  ) -> None:
-        super().__init__(voice, speed, callback, g2p_bakend)
+        super().__init__(voice, speed, callback, g2p_backend)
         self.host = host
         self.port = port
         self.callback=callback
+        self.conn: socket.socket | None = None
+        self.server: socket.socket | None = None
 
-    def as_file(self) -> Generator[str | EndOfResponse]:
+    def as_file(self) -> Generator[str|EndOfResponse|Sentinel]:
         with socket.socket() as server:
-            conn, _ = server.accept()
-            with conn:
+            self.server = server
+            self.server.bind((self.host, self.port))
+            self.conn, _ = server.accept()
+            with self.conn:
                 while self.streaming:
-                    file = conn.makefile()
+                    file = self.conn.makefile()
                     for line in file:
                         yield line
                     yield EOF
+        yield SENTINEL
+
+    def wake_up(self):
+        if self.conn:
+            self.conn.shutdown(socket.SHUT_RDWR)
+            self.conn.close()
+
+        if self.server:
+            self.server.close()
+
+
+class Hook(TTSStream):
+    def __init__(self,
+                 speed: float = 1,
+                 voice: VoiceEnum | str | None = None,
+                 callback: DeferrableDef = None,
+                 g2p_backend: Graphemes2Phonemes | None = None
+                 ) -> None:
+        super().__init__(voice, speed, callback, g2p_backend)
+        self.job: Queue[str|Sentinel]
+
+    def adapter(self, text: str) -> None:
+        self.job.put(text)
+
+    def as_file(self) -> Generator[str|EndOfResponse|Sentinel]:
+        while self.streaming:
+            yield self.job.get()
+            yield EOF
+        yield SENTINEL
+
+    def wake_up(self) -> None:
+        self.job.put(SENTINEL)
+
 
 
 class STTStream(InputStream):
@@ -289,12 +334,11 @@ class STTStream(InputStream):
     def __init__(self,
                  voice: VoiceEnum | str | None = None,
                  speed: float = 1,
-                 callback: DifferedDef = None,
+                 callback: DeferrableDef = None,
                  ) -> None:
         super().__init__(callback=callback)
         self.voice = voice
         self.speed = speed
-
 
 
 class Microphone(STTStream):
@@ -316,7 +360,7 @@ class Microphone(STTStream):
 
         self.stream = None
         self.status: PfStatus = PfStatus()
-        self.callback: DifferedDef = callback
+        self.callback: DeferrableDef = callback
 
     def monitor(self):
         # A feature may one day live here.
@@ -370,6 +414,10 @@ class Microphone(STTStream):
                 f"  channels        {self.channels}\n"
                 f"  device          {self.device}"
                 )
+
+
+    def wake_up(self): ...
+
 
 def default_input():
 

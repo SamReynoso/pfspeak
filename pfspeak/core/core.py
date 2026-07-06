@@ -37,7 +37,7 @@ class PfSpeak:
         self.__sequence = itertools.count()
         self.__stream: OutputStream | None = None
 
-    def streaming(self, *devices: InputStream):
+    def streaming(self, *devices: InputStream) -> PfSession:
         build(self.__app)
 
         tts_enabled = False
@@ -65,7 +65,7 @@ class PfSpeak:
 
         return self.session
 
-    def speak(self, text: str, voice: str, speed: int = 1):
+    def speak(self, text: str, voice: str, speed: int = 1) -> None:
         if not self.__device:
             msg = "This session does not have a TTS worker running"
             raise RuntimeError(msg)
@@ -90,7 +90,7 @@ class PfSpeak:
              event: PfEvent | None = None,
              priority: int = 10,
              kill: bool = False,
-             ):
+             ) -> None:
         assert self.session
 
         if kill:
@@ -109,7 +109,7 @@ class PfSpeak:
             self.__ensure_stream(playback.samplerate)
 
 
-    def __callback(self, outdata, frames, *_):
+    def __callback(self, outdata, frames, *_) -> None:
 
         outdata.fill(0)
 
@@ -138,7 +138,7 @@ class PfSpeak:
             self.__active = None
             self.session.stt.unmute()
 
-    def __ensure_stream(self, samplerate: int):
+    def __ensure_stream(self, samplerate: int) -> None:
         if self.__stream is not None:
             return
         self.__stream = OutputStream(

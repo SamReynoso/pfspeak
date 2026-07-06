@@ -3,28 +3,31 @@ from pfspeak import PfSpeak
 from pfspeak.core import Fifo
 
 
-def serve() -> int:
+DESCRIPTION = "FIFO named pipe text-to-speech example"
+
+
+def main() -> int:
     pf = PfSpeak()
 
     try:
         fifo = Fifo("./input.pipe")
     except Exception:
-        sys.stderr.write("Could not get file descriptor\n")
+        sys.stderr.write("FIFO: Could not get file descriptor\n")
         return 1
 
     try:
 
         with pf.streaming(fifo) as session:
-            print("System Ready...")
+            print("FIFO: System Ready...")
             for event in session:
                 pf.play(event)
 
     except KeyboardInterrupt:
-        sys.stderr.write("\nshutdown requested\n")
-        print('shutdown_requested')
+        print('FIFO: shutdown requested')
         return 0
     except Exception:
-        print('unexpected error')
+        sys.stderr.write("\nFIFO: shutdown requested\n")
         return 1
 
+    print("FIFO: goodbye")
     return 0
