@@ -1,116 +1,61 @@
-from queue import Queue
-from threading import Thread
 from typing import Callable
-from pfspeak.extra.voices import Voices
-from pfspeak.core.runtime import worker
-from pfspeak.core.repo import SpeechRepo
-from pfspeak.common.defaults import AppSpec
-from pfspeak.common.types import DifferedDef
-from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.common.dataclasses import WorkRequest, WorkerMessage
-from pfspeak.common.dataclasses import Sentinel, PfStatus, Prediction
+from subprocess import Popen
+from threading import Thread
+from multiprocessing import Queue
+from multiprocessing.connection import Connection
+from pfspeak.common.dataclasses import WorkRequest, Sentinel
+
+
+PopWorker = Callable[..., tuple[Popen, Connection]]
+
+class WorkerAdapter:
+    def __init__(self, start: PopWorker):
+        self._start = start
+
+    def start(self):
+        self.child, self.conn = self._start()
 
 
 class PipelineConnections:
-
-    def __init__(self, send_out, receive_back) -> None:
-        self.receive_back = Thread(target=receive_back, daemon=True)
-        self.send_out = Thread(target=send_out, daemon=True)
-        self.conn = None
-        self.child = None
-
-    def start(self):
-        print("Pipeline: initualizing connectons")
-        self.child, self.conn = worker.start()
-        self.receive_back.start()
-        self.send_out.start()
-
-    def close(self):
-        assert self.child
-        worker.join(self.child)
-        self.receive_back.join()
-        self.send_out.join()
-        print("Pipeline: works shutdown")
-
-    @property
-    def send(self):
-        assert self.conn
-        return self.conn.send
-
-    @property
-    def recv(self):
-        assert self.conn
-        return self.conn.recv
-
-
-class PfPipeline:
-
     def __init__(self,
-                 app: AppSpec,
-                 repo: SpeechRepo,
-                 g2p: Graphemes2Phonemes
+                 worker: WorkerAdapter,
+                 add_prediction: Callable,
+                 exceptons: Queue,
                  ) -> None:
-        print("Pipeline: inistulizing ")
-        self.app = app
-        self.repo = repo
-        self.g2p = g2p
+        self.worker = worker
+        self.keep_alive = True
+        self.exceptions = exceptons
+        self.request_queue = Queue()
+        self.add_prediction = add_prediction
+        self.send_out = self._as_thread(self.__send_out)
+        self.receive_back = self._as_thread(self.__receive_back)
 
+    def _as_thread(self, job):
+        def with_exception_handling():
+            try:
+               job() 
+            except Exception as e:
+                self.exceptions.put(e)
+        return Thread(target=with_exception_handling, daemon=True)
 
-        self.buffer = Queue()
-        self.status = PfStatus()
-        self.add_event: DifferedDef = None
+    def __send_out(self):
+        while self.keep_alive:
+            self.worker.conn.send(self.request_queue.get())
 
-        self.speed = 1
-        self.voice = Voices.EN.AF_HEART
-        self.connections = PipelineConnections(self.send_out, self.receive_back)
-        print("Pipeline: initualized")
-
-    def __update_status(self, message: WorkerMessage):
-        self.status.sent += len(message.tokens)
-
-    def __post_recording(self, prediction: Prediction):
-        assert self.add_event
-        self.status.received+= len(prediction.tokens)
-        self.status.line = "synthesis received"
-        self.add_event(prediction.event(self.status))
-
-    def send_out(self):
-        while True:
-            msg: WorkerMessage | Sentinel = self.buffer.get()
-            self.connections.send(msg)
-            self.status.line = "worker message sent"
-            if isinstance(msg, Sentinel):
-                return
-            self.__update_status(msg)
-
-    def receive_back(self):
-        assert self.add_event
-        while True:
-            prediction: Prediction | Sentinel = self.connections.recv()
-            if isinstance(prediction, Sentinel):
-                return
-            self.__post_recording(prediction)
-
-    def start(self):
-        print("Pipeline: starting")
-        self.connections.start()
-        print("Pipeline: READY")
-
-    def stop(self):
-        print("Pipeline: stopping")
-        self.buffer.put(Sentinel())
-        self.connections.close()
-        print("Pipeline: stopped")
+    def __receive_back(self):
+        while self.keep_alive:
+            self.add_prediction(self.worker.conn.recv())
 
     def factory(self):
-        print("Pipeline: device assigned")
-
         def callback(request: WorkRequest):
-            voice = self.voice if request.voice is None else request.voice
-            message = request.make(self.g2p(request.text), voice=voice)
-            self.buffer.put(message)
-
+            self.request_queue.put(request)
         return callback
 
-    def bind_status(self, factory: Callable):
-        self.status = factory("Pipeline")
+    def join(self):
+        self.keep_alive = False
+        self.request_queue.put(Sentinel())
+
+    def start(self):
+        self.worker.start()
+        self.send_out.start()
+        self.receive_back.start()

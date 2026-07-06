@@ -1,18 +1,22 @@
 import heapq
 import itertools
-from sounddevice import OutputStream
 from uuid import UUID
+from sounddevice import OutputStream
+from pfspeak.core.runtime import worker
+from pfspeak.core.runtime.pipeline import WorkerAdapter
 from pfspeak.extra.voices import Voices
 from pfspeak.app.directories import build
 from pfspeak.core.types import ServiceTypes
-from pfspeak.core.asset import follow_policy
+from pfspeak.core.param import ListenParams
 from pfspeak.core.devices import InputStream
 from pfspeak.common.types import OptionalSpec
 from pfspeak.core.devices import Devices, Hook
+from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from pfspeak.common.dataclasses import PfEvent, Playback
+from pfspeak.core.asset import RecognizerAsset, follow_policy
 from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
-from pfspeak.core.session import PfSession, STTSession, TTSSession
+from pfspeak.core.session import PfSession, SttBackend, TtsBackend
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
@@ -64,40 +68,48 @@ class PfSpeak:
         tts_enabled = False
         for device in devices:
 
-            if device.SESSIONIZER == STTSession:
+            if SttBackend.is_compatiable(device):
                 follow_policy(self.__app, RecognizerRepo(), ServiceTypes.STT) 
 
-            elif device.SESSIONIZER == TTSSession:
+            elif TtsBackend.is_compatiable(device):
                 tts_enabled = True
                 follow_policy(self.__app, SpeechRepo(), ServiceTypes.TTS)
 
-        self.session = PfSession(*devices)
+        g2p = Graphemes2Phonemes()
+        worker_adapter = WorkerAdapter(worker.start)
+        recognizer_asset = RecognizerAsset(DEFAULT_APP_SPEC, RecognizerRepo())
+        recognizer = recognizer_asset.load(ListenParams())
+
+        self.session = PfSession(g2p, worker_adapter, recognizer)
+        self.session.add_devices(devices)
 
         if tts_enabled:
             device = Hook()
             self.session.add_device(device)
-            self.__device = device
+            self.__hook = device
 
         return self.session
 
-    def speech(self, text: str, voice: str, speed: int = 1):
+    def speak(self, text: str, voice: str, speed: int = 1):
         if not self.__device:
             raise RuntimeError(
                     "This session does not have a TTS worker running"
                     )
-        self.__device.speak(text, voice, speed=speed)
+        self.__hook.voice = voice
+        self.__hook.speed = speed
+        self.__hook.adapter(text)
 
     def print(self, event: PfEvent) -> None:
         print("\033[2J\033[H", end="")
-        self.__convo[(event.service, event.device_id)] = event
-        for identity, event in self.__convo.items():
-            print("-" * 3, identity[0], identity[1], "-" * 3)
-            print(event.recording.text + "\n")
+        if event.service != PfEvent.EventTypes.TICKET:
+            assert event.service and event.device_id
+            self.__convo[(event.service, event.device_id)] = event
+            for identity, event in self.__convo.items():
+                assert event.recording
+                print("-" * 3, identity[0], identity[1], "-" * 3)
+                print(event.recording.text + "\n")
         print("\n\n", "-" * 25)
         assert self.session
-        for name, status in self.session.statuses.items():
-            print(f"{name}: {status.line}")
-        print("-" * 25, "\n\n")
 
     def play(self,
              event: PfEvent | None = None,
@@ -111,7 +123,7 @@ class PfSpeak:
             self.session.unmute()
             return
 
-        if event:
+        if event and event.recording:
             playback = Playback(
                         priority=priority,
                         sequence=next(self.__sequence),
@@ -161,4 +173,3 @@ class PfSpeak:
                 callback=self.__callback,
                 )
         self.__stream.start()
-

@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import numpy
+
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
 
@@ -46,14 +48,12 @@ class PfEvent:
         DUCK = "duck"
         TICKET = "ticket"
 
-    status: PfStatus
+    finalized: bool
+    device_id: UUID | None
     service: EventTypes
-
-    device_id: UUID
-    recording: Recording
     device: InputStream | None
 
-    finalized: bool = False
+    recording: Recording | None
 
     @property
     def types(self):
@@ -61,8 +61,6 @@ class PfEvent:
 
     def __repr__(self):
         return (f"PfEvent(service={self.service}, "
-                f"status.sent={self.status.sent}, "
-                f"status.received={self.status.received}, "
                 f"recording={len(self.recording.text) if self.recording else 0}"
                 ")")
 
@@ -70,14 +68,14 @@ class PfEvent:
 @dataclass(slots=True)
 class WorkRequest:
     device_id: UUID
-    text: str 
+    tokens: TokenList
     voice: VoiceEnum | str | None = None
     speed: float = 1 
 
     def __repr__(self) -> str:
         voice = f"'{self.voice}'" if self.voice else None
         return ("WorkerRequest(, "
-                f"text={len(self.text)}, "
+                f"tokens={len(self.tokens)}, "
                 f"voice={voice}, "
                 f"speed={self.speed})"
                 )
@@ -257,6 +255,22 @@ class AudioChunk:
     samplerate: int
     start_time: float
 
+    _rms: float | None = None
+    _peak: float | None = None
+
+    @property
+    def rms(self):
+        if self._rms is None:
+            self._rms = numpy.sqrt(numpy.mean(self.waveform**2))
+        return self._rms
+
+    @property
+    def peak(self):
+        if self._peak is None:
+            self._peak = numpy.max(numpy.abs(self.waveform))
+        return self._peak
+
+
     @property
     def duration(self) -> float:
         return self.waveform.shape[0] / self.samplerate
@@ -276,18 +290,19 @@ class Prediction:
     audio: TypeTensor
     pred_dur: TypeTensor
 
-    def event(self, status: PfStatus) -> PfEvent:
-        apply_prediction_duration_timestamps(self.tokens,
-                                             self.pred_dur)
+    def as_event(self) -> PfEvent:
+        apply_prediction_duration_timestamps(self.tokens, self.pred_dur)
         return PfEvent(
-                status=status,
                 device=None,
+                finalized=True,
                 device_id=self.device_id,
                 service=PfEvent.EventTypes.TTS,
-                recording=Prediction.recording(self))
+                recording=Prediction.recording(self),
+                )
 
     @staticmethod
     def recording(prediction):
+        # TODO: ...
         waveform = array(prediction.audio).astype(float32)
         chunk = AudioChunk(device_id=prediction.device_id,
                            waveform=waveform,

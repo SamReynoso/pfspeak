@@ -8,7 +8,6 @@ from pfspeak.core.asset import (
         )
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.defaults import AppSpec
-from pfspeak.common.types import AudioPrediction
 from pfspeak.common.dataclasses import CudaSupport
 from pfspeak.common.exceptions import ArchitectureNotInitializeError
 from pfspeak.common.just_checking import TypeArchitecture, TypeTensor
@@ -143,7 +142,7 @@ class SpeechModel:
                  phonemes: str,
                  voice: str,
                  speed: float
-                 ) -> AudioPrediction:
+                 ) -> tuple[TypeTensor, TypeTensor]:
         """
         RETURNS A TUPLE OF TWO PYTORCH TENSORS.
 

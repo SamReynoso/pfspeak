@@ -1,11 +1,16 @@
+from torch import Type
+
 from .inference import SpeechModel
 from collections.abc import Generator
 from pfspeak.common.dataclasses import (
         PfToken,
         TokenList,
         )
-from pfspeak.common.types import AudioPrediction, Prediction
+from pfspeak.common.just_checking import TypeTensor
 
+
+ModelOutput = tuple[TypeTensor, TypeTensor]
+BatchResults = tuple[TokenList, ModelOutput]
 
 class Driver:
 
@@ -14,7 +19,7 @@ class Driver:
                              model: SpeechModel,
                              voice: str,
                              speed: float,
-                             ) -> Generator[AudioPrediction]:
+                             ) -> Generator[ModelOutput]:
         yield Driver.infer(model, phoneme_string, voice, speed) 
 
     @staticmethod
@@ -22,7 +27,7 @@ class Driver:
                              model: SpeechModel,
                              voice: str,
                              speed: float = 1,
-                             ) -> Generator[Prediction]:
+                             ) -> Generator[BatchResults]:
         for token_batch in Driver.chunks(tokens, model.max_phonemes):
             prediction = Driver.infer(model, token_batch.phonemes, voice, speed)
             yield token_batch, prediction
@@ -32,7 +37,7 @@ class Driver:
               phonemes: str, 
               voice: str,
               speed: float,
-              ) -> AudioPrediction:
+              ) -> ModelOutput:
 
         if not len(phonemes):
             raise ValueError("phonemes cannot be empty")

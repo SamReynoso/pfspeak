@@ -4,6 +4,7 @@ import socket
 import subprocess
 from time import sleep, time
 from collections import deque
+from typing import Callable
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.dataclasses import (
         Prediction,
@@ -79,8 +80,14 @@ def worker(host: str, port: int):
             current_job = jobs.popleft()
             gen = Driver.chunks(current_job.tokens, 254)
 
+from subprocess import Popen
+from multiprocessing.connection import Connection
 
-def start():
+
+PopWorkerOutput = tuple[Popen, Connection]
+
+
+def start() -> PopWorkerOutput:
 
     print(f"Main: pid={os.getpid()}")
 
@@ -114,7 +121,7 @@ def _prepare_worker_launch():
     return host, port, args
 
 
-def join(process):
+def shutdown(process):
 
     try:
         process.wait(timeout=2)

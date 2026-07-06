@@ -9,9 +9,3 @@ class ServiceTypes(StrEnum):
 class LoadPolicy(StrEnum):
     EAGER = "eager"
     LAZY = "lazy"
-
-
-class InProcess: ...
-
-
-class WorkerProcess: ...

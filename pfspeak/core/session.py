@@ -1,264 +1,144 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from uuid import UUID
+
+from pfspeak.common.g2p import Graphemes2Phonemes
 
 if TYPE_CHECKING:
     from .devices import InputStream
 
-from uuid import UUID, uuid4
-from typing import Callable
 from queue import Empty, Queue
-from abc import ABC, abstractmethod
 from collections.abc import Generator
-from pfspeak.core.param import ListenParams
-from pfspeak.common.types import OptionalSpec
-from pfspeak.core.asset import RecognizerAsset
-from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.common.defaults import DEFAULT_APP_SPEC
-from pfspeak.core.runtime.buffer import ListenBuffer
-from pfspeak.core.runtime.pipeline import PfPipeline
-from pfspeak.core.types import InProcess, WorkerProcess
-from pfspeak.core.repo import RecognizerRepo, SpeechRepo
-from pfspeak.common.dataclasses import PfEvent, PfStatus, Recording
+from pfspeak.core.runtime.buffer import (
+        AudioRecognizer,
+        Recognition,
+        RecognizerAdapter
+        )
+from pfspeak.common.just_checking import TypeRecognizer
+from pfspeak.core.runtime.pipeline import PipelineConnections, WorkerAdapter
+from pfspeak.common.dataclasses import Audio, PfEvent, Prediction, Recording
 
 
-class BaseSession(ABC):
-    def __init__(self, app, repo) -> None:
-        self.app = app
-        self.repo = repo
-        self.is_muted = True
-        self.callback = None
-        self.devices: dict[UUID, InputStream] = {}
+class PfBackend:
+    @classmethod
+    def is_compatiable(cls, device: InputStream):
+        return issubclass(device.BACKEND, cls)
+
+
+class SttBackend(PfBackend):
+
+    def __init__(self, g2p, event_queue, recognizer: TypeRecognizer) -> None:
+        self.g2p = g2p
+        self.event_queue = event_queue
+        self.recognizer = AudioRecognizer(self.add_prediction)
+        self.recognizer_adapter = RecognizerAdapter(recognizer)
+
+    def add_prediction(self, prediction: Recognition):
+        event = PfEvent(service=PfEvent.EventTypes.STT,
+                        device=None,
+                        device_id=prediction.device_id,
+                        finalized=False,
+                        recording=Recording(tokens=self.g2p(prediction.currnt),
+                                            audio=Audio(prediction.lookback)
+                                            )
+                        )
+        self.event_queue.put(event)
 
     def add_device(self, device: InputStream) -> None:
-        if self.__put_exception is None:
-            raise RuntimeError(
-                    "Attempting to device before binding exectpion queue")
-        device.callback = self.callback
-        device.exceptions = self.__put_exception
-        self.devices[device.uuid] = device
+        device.callback = self.recognizer.factory(self.recognizer_adapter)
 
-    def bind_exceptions(self, put: Callable) -> None:
-        self.__put_exception = put
+class TtsBackend(PfBackend):
 
-    @abstractmethod
-    def bind_event_queue(self, put: Callable) -> None: ...
+    def __init__(self, g2p, events_queue, exceptions, worker) -> None:
+        self.g2p = g2p 
+        self.exceptions = exceptions
+        self.events_queue = events_queue
+        self.pipeline = PipelineConnections(worker,
+                                            self.add_prediction,
+                                            exceptions)
 
-    @abstractmethod
-    def duck(self) -> None: ...
+    def add_prediction(self, prediction: Prediction):
+        event = prediction.as_event()
+        self.events_queue.put(event)
 
-    @abstractmethod
-    def unduck(self) -> None: ...
-
-    @abstractmethod
-    def __enter__(self, *_) -> BaseSession: ...
-
-    @abstractmethod
-    def __exit__(self, *_) -> None: ...
-
-
-class STTSession(BaseSession):
-
-    STRATEGY = InProcess
-
-    def __init__(self,
-                 app: OptionalSpec = None,
-                 repo: RecognizerRepo | None = None,
-                 ) -> None:
-        super().__init__(app or DEFAULT_APP_SPEC, repo or RecognizerRepo())
-        self.create_pipeline()
-        self.callback = self.buffer.factory(16_000)
-
-    def create_pipeline(self) -> None:
-        params = ListenParams()
-        recognizer = RecognizerAsset(self.app, self.repo).load(params)
-        g2p = Graphemes2Phonemes()
-        self.buffer = ListenBuffer(recognizer, g2p)
-
-    def bind_status(self, factory: Callable):
-        self.buffer.bind_status(factory)
-
-    def bind_event_queue(self, put: Callable) -> None:
-
-        def emit(event: PfEvent) -> None:
-            put(event)
-
-        self.buffer.add_event = emit
-
-    def duck(self) -> None:
-        self.buffer.duck()
-
-    def unduck(self) -> None:
-        self.buffer.unduck()
-
-    def __enter__(self, *_) -> STTSession:
-        for device in self.devices.values():
-            device.start()
-        self.is_muted = False
-        return self
-
-    def __exit__(self, *_) -> None:
-        for device in self.devices.values():
-            device.stop()
-        self.is_muted = False
-
-
-class TTSSession(BaseSession):
-
-    STRATEGY = WorkerProcess
-
-    def __init__(self,
-                 app: OptionalSpec = None,
-                 repo: SpeechRepo | None = None
-                 ) -> None:
-        super().__init__(app or DEFAULT_APP_SPEC, repo or SpeechRepo())
-        g2p = Graphemes2Phonemes()
-        self.pipeline = PfPipeline(self.app, self.repo, g2p)
-        self.callback = self.pipeline.factory()
-
-    def duck(self) -> None: ...
-    def unduck(self) -> None: ...
-
-    def bind_status(self, factory: Callable):
-        self.pipeline.bind_status(factory)
-
-    def bind_event_queue(self, put: Callable) -> None:
-
-        def emit(event: PfEvent):
-            if event.recording:
-                self.devices[event.device_id].recordings.append(event.recording)
-            put(event)
-
-        self.pipeline.add_event = emit 
-
-    def __enter__(self, *_) -> TTSSession:
-        self.pipeline.start()
-        for device in self.devices.values():
-            device.start()
-        self.is_muted = False
-        return self
-
-    def __exit__(self, *_) -> None:
-        for device in self.devices.values():
-            device.stop()
-        self.pipeline.stop()
-        self.is_muted = True
+    def add_device(self, device: InputStream):
+        device.callback = self.pipeline.factory()
 
 
 class PfSession:
 
-    def __init__(self, *devices: InputStream) -> None:
-        self.uuid = uuid4()
-        self.__sessions_map = {}
-        self.__sessions = [] 
-        self.__workers= []
-        self.__events = Queue()
-        self.__exceptions = Queue()
-        self.__devices: dict[UUID, InputStream] = {}
-        self.status = PfStatus()
-        self.statuses: dict[str, PfStatus] = {"Session": self.status}
+    def __init__(self,
+                 g2p: Graphemes2Phonemes,
+                 worker: WorkerAdapter,
+                 recognizer: TypeRecognizer,
+                 ) -> None:
+        self.events_queue: Queue[PfEvent] = Queue()
+        self.exceptions: Queue[BaseException] = Queue()
+        self.devices: dict[UUID, InputStream] = {}
+        self.tts: TtsBackend = TtsBackend(g2p,
+                                          self.events_queue,
+                                          self.exceptions, worker)
+        self.stt: SttBackend = SttBackend(g2p, self.events_queue, recognizer)
+        self.muted: bool = True
+
+    def add_devices(self, devices):
         for device in devices:
             self.add_device(device)
 
-    def register_status(self, name: str):
-        status = PfStatus()
-        self.statuses[name] = status
-        return status
-
     def add_device(self, device: InputStream) -> None:
-        if device.uuid in self.__devices:
-            raise RuntimeError("Devices can only be added to a session once")
+        if device.device_id in self.devices:
+            raise RuntimeError("Duplicate session device")
+        self.devices[device.device_id] = device
+        if SttBackend.is_compatiable(device):
+            self.stt.add_device(device)
+        elif TtsBackend.is_compatiable(device):
+            self.tts.add_device(device)
 
-        self.__devices[device.uuid] = device
-        device.bind_status(self.register_status)
+    def mute(self) -> None:
+        self.muted = True
 
-        if device.SESSIONIZER.STRATEGY == WorkerProcess:
-            if self.__workers:
-                session = self.__workers[0]
-            else:
-                session = device.SESSIONIZER()
-                self.__workers.append(session)
-                self.__sessions.append(session)
-                session.bind_status(self.register_status)
-                session.bind_event_queue(self.__events.put)
-                session.bind_exceptions(self.__exceptions.put)
+    def unmute(self) -> None:
+        self.muted = False
 
-        elif device.SESSIONIZER.STRATEGY == InProcess:
-            session = device.SESSIONIZER()
-            self.__sessions.append(session)
-            session.bind_status(self.register_status)
-            session.bind_event_queue(self.__events.put)
-            session.bind_exceptions(self.__exceptions.put)
+    def reset(self, device: InputStream) -> None:
+        self.stt.recognizer.predictions.reset(device.device_id, self.stt.recognizer_adapter)
 
-        else:
-            raise ValueError("Unknow session worker strategy")
-
-        session.add_device(device)
-        self.__sessions_map[device.uuid] = session
-
+    def finalize(self, event: PfEvent):
+        assert event.device
+        event.finalized = True
+        self.reset(event.device)
 
     def __iter__(self) -> Generator[PfEvent]:
-        while self.__streams_active:
+        while True:
+            if not self.exceptions.empty():
+                raise self.exceptions.get_nowait()
 
             try:
-                exc = self.__exceptions.get_nowait()
-
-            except Empty:
-                pass
-
-            else:
-                raise exc
-
-            try:
-                event: PfEvent = self.__events.get(timeout=.02)
-                device = self.__devices[event.device_id]
-                event.device = device
-                if event.service != PfEvent.EventTypes.DUCK:
-                    device._current = event
+                event: PfEvent = self.events_queue.get(timeout=.02)
+                assert event.device_id
+                event.device =  self.devices[event.device_id]
+                if self.muted:
+                    event.service = PfEvent.EventTypes.DUCK
+                else:
+                    event.device._current = event
                 yield event
-
             except Empty:
                 yield PfEvent(
-                        device_id=self.uuid,
                         device=None,
-                        status=PfStatus(),
+                        finalized=False,
+                        device_id=None,
                         service=PfEvent.EventTypes.TICKET,
                         recording=Recording(),
                         )
 
-    def mute(self) -> None:
-        for session in self.__sessions:
-            session.duck()
-
-    def unmute(self) -> None:
-        for session in self.__sessions:
-            session.unduck()
-        self.status.line = "waiting"
-
-    def reset(self, device: InputStream) -> None:
-        session = self.__sessions_map[device.uuid]
-        if session.STRATEGY != InProcess:
-            raise RuntimeError("Only in-process devices can be reset")
-
-        session.buffer.reset_stream()
-        device._current = None
-
-    def finalize(self, event: PfEvent):
-        assert event.device
-        event.device.recordings.append(event.recording)
-        self.status.line = "event finalized"
-        self.reset(event.device)
-
-    def __enter__(self, *_) -> PfSession:
-        print("PfSession: starting")
-        for sessions in self.__sessions:
-            sessions.__enter__()
-
-        self.__streams_active = True
-        print("PfSession: READY")
+    def __enter__(self):
+        self.tts.pipeline.start()
+        for device in self.devices.values():
+            device.start()
         return self
 
-    def __exit__(self, *_) -> None:
-        print("PfSession: shutting down")
-        for session in self.__sessions:
-            session.__exit__(*_)
-        self.__streams_active = False
+    def __exit__(self, *_):
+        print("Shutting down session")
+        self.tts.pipeline.join()
+        for device in self.devices.values():
+            device.stop()

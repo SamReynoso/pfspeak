@@ -1,115 +1,69 @@
-from threading import Lock
+from uuid import UUID
 from collections import deque
-from typing import Callable
-from pfspeak.common.dataclasses import (
-        Audio,
-        PfEvent,
-        PfStatus,
-        Recording,
-        AudioChunk,
-        )
-from pfspeak.common.types import DifferedDef
-from pfspeak.common.g2p import Graphemes2Phonemes
+from pfspeak.common.dataclasses import AudioChunk
 from pfspeak.common.just_checking import TypeRecognizer
 
 
-class ListenBuffer:
+class Recognition:
+    def __init__(self, device_id: UUID, stream) -> None:
+        self.currnt = ""
+        self.stream = stream
+        self.device_id = device_id
+        self.lookback: deque = deque()
 
-    LOOKBACH_BLOCKS = 200
+    def if_it_is_updated(self, text):
+        if text != self.currnt:
+            self.currnt = text
+            return self
 
-    def __init__(self,
-                 recognizer: TypeRecognizer,
-                 g2p: Graphemes2Phonemes,
-                 ) -> None:
-        self.g2p = g2p
-        self.is_ducked = False
-        self.status = PfStatus()
-        self.stream_lock = Lock()
-        self.recognizer = recognizer
-        self._lookback: deque = deque()
-        self.add_event: DifferedDef = None
-        self.recording: Recording = Recording()
+    def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):
+        self.lookback.append(chunk)
+        text = recognizer.from_chunk(chunk, self.stream)
+        return self.if_it_is_updated(text)
 
-    def __create_stream(self):
-        self.stream = self.recognizer.create_stream()
 
-    def duck(self):
-        if not self.is_ducked:
-            self.status.line += "| ducked"
-            self.reset_stream()
-            with self.stream_lock:
-                self.is_ducked= True
+class PredictionBank:
 
-    def unduck(self):
-        if self.is_ducked:
-            self.status.line += "| online"
-            self.reset_stream()
-            with self.stream_lock:
-                self.is_ducked= False
+    def __init__(self) -> None:
+        self.__predictions: dict[UUID, Recognition] = {}
 
-    def reset_stream(self):
-        with self.stream_lock:
-            self.__create_stream()
-            self.recording = Recording()
+    def get(self, device_id: UUID, recognizer: RecognizerAdapter):
+        if device_id not in self.__predictions:
+            self.reset(device_id, recognizer)
+        return self.__predictions[device_id]
 
-    def __send_event(self, service: PfEvent.EventTypes):
-        assert self.recording
-        assert self.add_event
-        self.add_event(
-                PfEvent(
-                    device=None,
-                    service=service,
-                    status=self.status,
-                    recording=self.recording,
-                    device_id=self.recording.audio[0].device_id,
-                    )
-                )
+    def reset(self, device_id: UUID, recognizer: RecognizerAdapter):
+        predicion = Recognition(device_id, recognizer.create_stream())
+        self.__predictions[device_id] = predicion
 
-    def __recording_updated(self) -> None:
-        if self.is_ducked:
-            service = PfEvent.EventTypes.DUCK
-        else:
-            service = PfEvent.EventTypes.STT
-        with self.stream_lock:
-            self.__send_event(service)
+    def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):
+        return self.get(chunk.device_id, recognizer).feed(chunk, recognizer)
 
-    def factory(self, samplerate: int):
-        self.__create_stream()
 
-        def lookback() -> Audio:
-            audio = Audio(self._lookback)
-            self._lookback.clear()
-            return audio
+class AudioRecognizer:
 
-        def decode_stream_to_text(chunk):
-            self.stream.accept_waveform(samplerate, chunk.waveform)
-            while self.recognizer.is_ready(self.stream):
-                self.recognizer.decode_stream(self.stream)
-            return self.recognizer.get_result(self.stream)
+    def __init__(self, add_prediction) -> None:
+        self.add_prediction = add_prediction
+        self.predictions: PredictionBank = PredictionBank()
 
-        def sideeffects(chunk):
-            if len(self._lookback) == self.LOOKBACH_BLOCKS:
-                self._lookback.popleft()
-            self._lookback.append(chunk)
-            assert len(self._lookback) <= self.LOOKBACH_BLOCKS
-            self.status.received += 1
-
-        def compare_text(text: str):
-            if text and  self.recording.text != text:
-                tokens = self.g2p(text)
-                with self.stream_lock:
-                    self.recording.revise(tokens, lookback())
-                self.__recording_updated()
-
+    def factory(self, recognizer: RecognizerAdapter):
         def callback(chunk: AudioChunk):
-            text = decode_stream_to_text(chunk).strip()
-            sideeffects(chunk)
-            compare_text(text)
-
+            predicton = self.predictions.feed(chunk, recognizer)
+            if predicton:
+                self.add_prediction(predicton)
         return callback
 
-    def bind_status(self, factory: Callable):
-        self.status = factory("Buffer")
 
-    def stop(self):
-        self.stream.close()
+class RecognizerAdapter:
+
+    def __init__(self, recognizer: TypeRecognizer) -> None:
+        self.recognizer = recognizer
+
+    def from_chunk(self, chunk: AudioChunk, stream):
+        stream.accept_waveform(chunk.samplerate, chunk.waveform)
+        while self.recognizer.is_ready(stream):
+            self.recognizer.decode_stream(stream)
+        return self.recognizer.get_result(stream).strip()
+
+    def create_stream(self):
+        return self.recognizer.create_stream()

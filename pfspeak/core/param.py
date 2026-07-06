@@ -19,7 +19,7 @@ class RecognizerLanguage(str, Enum):
     ENGLISH = "en"
 
 
-class AudioChannels:
+class AudioChannels(int, Enum):
     MONO = 1
 
 

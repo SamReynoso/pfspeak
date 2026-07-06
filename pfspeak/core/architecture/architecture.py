@@ -5,7 +5,6 @@ from torch.nn import Module
 from .istftnet import Decoder
 from transformers import AlbertConfig
 from pfspeak.core.param import SpeechParams
-from pfspeak.common.types import AudioPrediction
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
 from pfspeak.common.exceptions import ContextLengthExceeded, UnknownPhonemeError
 
@@ -171,7 +170,7 @@ class KokoroArchitecture(Module):
                 phonemes: str,
                 ref_s: Tensor,
                 speed: float = 1,
-                ) -> AudioPrediction:
+                ) -> tuple[Tensor, Tensor]:
 
         # try:
         # except KeyError as e:

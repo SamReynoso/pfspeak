@@ -3,12 +3,12 @@ import json
 from abc import ABC
 from pathlib import Path
 from typing import ClassVar
-from pfspeak.core.param import ListenParams, SpeechParams
 from pfspeak.common.types import VoiceLable
 from pfspeak.common.just_checking import TypeTensor
 from pfspeak.common.defaults import AppSpec, RepoSpec
-from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from pfspeak.core.types import ServiceTypes,LoadPolicy
+from pfspeak.core.repo import RecognizerRepo, SpeechRepo
+from pfspeak.core.param import ListenParams, SpeechParams
 from huggingface_hub import hf_hub_download, snapshot_download
 
 
