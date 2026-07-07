@@ -1,26 +1,28 @@
 import heapq
 import itertools
 from uuid import UUID
+from typing import Callable
 from sounddevice import OutputStream
-from pfspeak.app.directories import build
-from pfspeak.core.repo import RecognizerRepo, SpeechRepo
-from pfspeak.core.types import ServiceTypes
-from pfspeak.core.asset import RecognizerAsset, follow_policy
-from pfspeak.core.param import ListenParams
-from pfspeak.core.devices import Devices, Hook, InputStream
-from pfspeak.core.session import PfSession, SttBackend, TtsBackend
 from pfspeak.core.runtime import worker
-from pfspeak.core.runtime.pipeline import WorkerAdapter
 from pfspeak.extra.voices import Voices
+from pfspeak.app.directories import build
+from pfspeak.core.types import ServiceTypes
+from pfspeak.core.param import ListenParams
 from pfspeak.common.types import OptionalSpec
 from pfspeak.common.g2p import Graphemes2Phonemes
+from pfspeak.core.runtime.pipeline import WorkerAdapter
 from pfspeak.common.dataclasses import PfEvent, Playback
+from pfspeak.core.repo import RecognizerRepo, SpeechRepo
+from pfspeak.core.devices import Devices, Hook, InputStream
 from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
+from pfspeak.core.asset import RecognizerAsset, follow_policy
+from pfspeak.core.session import PfSession, SttBackend, TtsBackend
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
 PlaybackBuffer = list[Playback]
 
+PfApp = Callable[[PfSession, PfEvent], None]
 
 class PfSpeak:
     voices = Voices
@@ -30,12 +32,19 @@ class PfSpeak:
     def __init__(self, app: OptionalSpec = None) -> None:
         self.__app = app or DEFAULT_APP_SPEC
         self.session: PfSession | None = None
-        self.__device: Hook | None = None
+        self.__hook: Hook | None = None
         self.__convo: LastEvents = {}
         self.__active: Playback | None = None
         self.__buffer: PlaybackBuffer = []
         self.__sequence = itertools.count()
         self.__stream: OutputStream | None = None
+        self.__print_lines: list[str] = []
+        self.__cancel_playback = False
+
+    def run(self, app: PfApp, *devices):
+        with self.streaming(*devices) as session:
+            for event in session:
+                app(session, event)
 
     def streaming(self, *devices: InputStream) -> PfSession:
         build(self.__app)
@@ -65,8 +74,8 @@ class PfSpeak:
 
         return self.session
 
-    def speak(self, text: str, voice: str, speed: int = 1) -> None:
-        if not self.__device:
+    def say(self, text: str, voice: str, speed: int = 1) -> None:
+        if not self.__hook:
             msg = "This session does not have a TTS worker running"
             raise RuntimeError(msg)
 
@@ -74,16 +83,27 @@ class PfSpeak:
         self.__hook.speed = speed
         self.__hook.adapter(text)
 
-    def print(self, event: PfEvent) -> None:
+    def print(self, value: PfEvent | str) -> None:
         print("\033[2J\033[H", end="")
-        if event.service != PfEvent.EventTypes.TICKET:
-            assert event.service and event.device_id
-            self.__convo[(event.service, event.device_id)] = event
-            for identity, event in self.__convo.items():
-                assert event.recording
-                print("-" * 3, identity[0], identity[1], "-" * 3)
-                print(event.recording.text + "\n")
+        if isinstance(value, str):
+            self.__print_lines.append(value)
+        elif value.service != PfEvent.EventTypes.TICKET:
+                assert value.service and value.device_id
+                self.__convo[(value.service, value.device_id)] = value
+
+        for identity, event in self.__convo.items():
+            assert event.recording
+            print(f"[{identity[0].upper()}]")
+            print("\t" + event.recording.text + "\n")
+            if event.service == event.types.STT:
+                print("FINALIZED:", event.finalized)
+            if event.status:
+                print("STATUS:", event.status)
+            print()
+
         print("\n\n", "-" * 25)
+        for line in self.__print_lines:
+            print(line)
         assert self.session
 
     def play(self,
@@ -94,15 +114,20 @@ class PfSpeak:
         assert self.session
 
         if kill:
-            self.__buffer = []
-            self.session.stt.unmute()
+            self.__cancel_playback = True
             return
 
         if event and event.recording:
+
+            try:
+                waveform = event.recording.to_waveform()
+            except ValueError:
+                raise ValueError("Failed to create waveform from recording")
+
             playback = Playback(
                         priority=priority,
                         sequence=next(self.__sequence),
-                        waveform= event.recording.audio.to_waveform(),
+                        waveform= waveform,
                         samplerate=event.recording.audio.samplerate)
 
             heapq.heappush(self.__buffer, playback)
@@ -111,9 +136,16 @@ class PfSpeak:
 
     def __callback(self, outdata, frames, *_) -> None:
 
+        assert self.session
+
+        if self.__cancel_playback:
+            self.__active = None
+            self.__buffer = []
+            self.session.stt.unmute()
+            return
+
         outdata.fill(0)
 
-        assert self.session
         if self.__active and self.__buffer and self.__active > self.__buffer[0]:
             active = heapq.heappop(self.__buffer)
             heapq.heappush(self.__buffer, self.__active)
@@ -133,6 +165,8 @@ class PfSpeak:
         n = len(chunk)
         outdata[:n, 0] = chunk
         self.__active.cursor += n
+
+
 
         if self.__active.cursor >= len(self.__active.waveform):
             self.__active = None

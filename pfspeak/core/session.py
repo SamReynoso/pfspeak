@@ -37,7 +37,7 @@ class SttBackend(PfBackend):
     def get_or_create(self, prediction: Recognition) -> Recording:
 
         device_id = prediction.device_id
-        tokens, audio = self.g2p(prediction.current), Audio(prediction.lookback) 
+        tokens, audio = self.g2p(prediction.text), Audio(prediction.lookback) 
 
         if device_id in self.cycle:
             self.cycle[device_id].revise(tokens, audio)
@@ -54,10 +54,12 @@ class SttBackend(PfBackend):
 
     def add_prediction(self, prediction: Recognition) -> None:
         recording = self.get_or_create(prediction)
+        final = True if self.service is PfEvent.EventTypes.DUCK else False
+        assert recording is not None
         event = PfEvent(device_id=prediction.device_id,
                         service=self.service,
                         recording=recording,
-                        finalized=False,
+                        finalized=final,
                         device=None)
         self.event_queue.put(event)
 
@@ -85,9 +87,7 @@ class TtsBackend(PfBackend):
                                             exceptions)
 
     def add_prediction(self, prediction: Prediction) -> None:
-        event = prediction.as_event()
-        self.events_queue.put(event)
-
+        self.events_queue.put(prediction.as_event())
 
     def add_device(self, device: InputStream) -> None:
         device.callback = self.pipeline.factory()
@@ -107,6 +107,7 @@ class PfSession:
                                           self.events_queue,
                                           self.exceptions, worker)
         self.stt: SttBackend = SttBackend(g2p, self.events_queue, recognizer)
+        self.__keep_alive = True
 
     def add_devices(self, devices):
         for device in devices:
@@ -120,36 +121,44 @@ class PfSession:
             self.stt.add_device(device)
         elif TtsBackend.is_compatiable(device):
             self.tts.add_device(device)
+        device.exceptions = self.exceptions
 
     def reset(self, device: InputStream) -> None:
         self.stt.reset(device.device_id)
-        device._current = None
+        device.active = None
 
     def finalize(self, event: PfEvent):
         assert event.device
         event.finalized = True
         self.reset(event.device)
 
+    def shutdown(self):
+        self.__keep_alive = False
+
     def __iter__(self) -> Generator[PfEvent]:
-        while True:
+        event: PfEvent | None = None
+        while self.__keep_alive:
             if not self.exceptions.empty():
                 raise self.exceptions.get_nowait()
 
             try:
-                event: PfEvent = self.events_queue.get(timeout=0.015)
+                event = self.events_queue.get(timeout=0.015)
                 assert event.device_id
                 event.device =  self.devices[event.device_id]
-                if event.service != PfEvent.EventTypes.DUCK:
-                    event.device._current = event
+                if not event.finalized:
+                    event.device.active = event
                 yield event
+
             except Empty:
+                for device in self.devices.values():
+                    if device.active:
+                        yield device.active 
                 yield PfEvent(
-                        device=None,
+                        service=PfEvent.EventTypes.TICKET,
                         finalized=False,
                         device_id=None,
-                        service=PfEvent.EventTypes.TICKET,
-                        recording=Recording(),
-                        )
+                        recording=None,
+                        device=None)
 
     def __enter__(self):
         self.tts.pipeline.start()
@@ -157,7 +166,17 @@ class PfSession:
             device.start()
         return self
 
-    def __exit__(self, *_):
+    def __exit__(self, *args):
+
         self.tts.pipeline.join()
+
         for device in self.devices.values():
             device.stop()
+
+        if args[1] is not None:
+            return False
+
+        if not self.exceptions.empty():
+            raise self.exceptions.get_nowait()
+
+        return False

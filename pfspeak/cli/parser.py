@@ -10,10 +10,12 @@ sub = parser.add_subparsers(dest="command")
 sub.add_parser("help")
 sub.add_parser("config")
 sub.add_parser("install")
+sub.add_parser("daemon")
+
 parser.add_argument("--regenerate", action="store_true")
 
 examples = sub.add_parser("examples", help="PfSpeak Example and Demonstrations.")
-examples.add_argument("example", choices=["chat", "simple_stt", "fifo"])
+examples.add_argument("example", choices=["chat", "stt", "fifo"])
 
 chat = sub.add_parser("chat", help="Run the local speech-to-speech assistant demo.")
 chat.add_argument("--model", default=DEFAULT_LLM, metavar="MODEL", help="Ollama model to use (default: %(default)s).")

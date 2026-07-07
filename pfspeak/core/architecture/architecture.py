@@ -6,7 +6,7 @@ from .istftnet import Decoder
 from transformers import AlbertConfig
 from pfspeak.core.param import SpeechParams
 from .modules import CustomAlbert, ProsodyPredictor, TextEncoder
-from pfspeak.common.exceptions import ContextLengthExceeded, UnknownPhonemeError
+from pfspeak.common.exceptions import ContextLengthExceeded
 
 
 class KokoroArchitecture(Module):

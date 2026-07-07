@@ -5,29 +5,37 @@ PfSpeak Chat Demo
 This application is a reference implementation built with the PfSpeak
 library.
 
-Its purpose is to demonstrate how speech-to-text, text-to-speech, language
-models, and user application logic compose into a complete speech
+Its purpose is to demonstrate how speech recognition, language models,
+text-to-speech, and application logic compose into a complete voice
 application.
 
-The application intentionally contains only application logic. Features
-such as conversation memory, commands, and automatic message
-finalization are implemented here rather than inside PfSpeak.
+The example intentionally keeps framework code and application code
+separate. Features such as conversation memory, voice commands, and
+automatic message finalization are implemented here rather than inside
+PfSpeak.
 
-PfSpeak Design
---------------
+PfSpeak Provides
+----------------
 
-PfSpeak is a library, not a chatbot or assistant framework.
+PfSpeak is a speech framework, not a chatbot framework.
 
-PfSpeak provides:
+The library provides:
 
-- Speech-to-text
+- Speech recognition
 - Text-to-speech
 - Event streaming
 - Device abstractions
 - Session management
+- Playback helpers
 
-PfSpeak does not prescribe how applications should manage
-conversation, memory, prompts, or business logic.
+PfSpeak does not implement:
+
+- Conversation memory
+- Commands
+- Prompt engineering
+- Chat history
+- Assistant personalities
+- Application business logic
 
 Those concerns belong to the application.
 
@@ -39,33 +47,31 @@ The application receives a stream of events from one or more devices.
 Application code decides:
 
 - when speech should be finalized,
-- what should be sent to the language model,
-- how responses are remembered,
-- and what should be played back.
+- when requests should be sent to the language model,
+- how conversation history is stored,
+- how voice commands are handled,
+- and which synthesized responses should be played.
 
-The framework intentionally leaves these decisions to the application.
+PfSpeak intentionally leaves these decisions to the application.
 
-Commands
---------
+Voice Commands
+--------------
 
 chat finalize
-    Immediately send the current recording to the language model.
+    Finalize the current utterance immediately and send it to the language
+    model.
 
 chat reset
-    Discard the current recording.
+    Discard the current utterance without sending it to the language model.
 
 chat exit
     Exit the application.
 
-set value word minimum <number>
-    Change the minimum number of words required before automatic
-    submission.
+Interrupt Phrase
+----------------
 
-set value unchanged timeout <seconds>
-    Change the amount of time speech must remain unchanged before
-    automatic submission.
-
-
+While the assistant is speaking, saying the configured interrupt phrase
+immediately stops audio playback.
 """
 
 
@@ -114,7 +120,9 @@ class Mem:
     def prompt(self):
         return self._memory
 
+
 DESCRIPTION = "PfSpeak Project Assistant"
+
 
 def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> int:
 
@@ -133,54 +141,47 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
         for e in session:
 
             pf.play()
+            pf.print(e)
+
             if e.service == e.types.TICKET:
-                ...
-            else:
-                pf.print(e)
+                continue
 
             if e.service == e.types.DUCK:
                 if events.anywhere(e, "pizza moonlight"):
                     pf.play(kill=True)
-                    session.reset(microphone)
 
             if e.service == e.types.STT:
 
-                if events.ends_with_phrase(e, f"chat exit"):
+                if events.ends_with_phrase(e, "chat exit"):
                     return 0
 
-                elif events.ends_with_phrase(e, f"chat finalize"):
+                elif events.ends_with_phrase(e, "chat finalize"):
                     line = events.trim_end(e, 2)
-                    print(f"Chat: finallized ({line_ends(line)})")
+                    pf.print(f"Chat: finallized ({line_ends(line)})")
                     memory.append_user(line)
                     session.finalize(e)
                     ollama.adapter(prompt=memory.prompt())
 
-                elif events.ends_with_phrase(e, f"chat reset"):
+                elif events.ends_with_phrase(e, "chat reset"):
+                    session.reset(microphone)
+
+                elif events.unchanged_for(e, 5):
+                    if events.word_count(e) > 12:
+                        line = e.text
+                        pf.print(f"Chat: reqierment met ({line_ends(line)})")
+
+                        memory.append_user(line)
+                        session.finalize(e)
+                        ollama.adapter(prompt=memory.prompt())
+                    else:
+                        pf.print("Chat: timeout(inactivity)")
                     session.reset(microphone)
 
             elif e.device == ollama:
                 memory.append_chat(e)
                 pf.play(e)
 
-            elif e := microphone.current:
-                assert e.service == e.types.STT, e.service
-                assert e.recording
-                if events.unchanged_for(e, 5):
-                    if events.word_count(e) > 12:
-                        line = e.recording.text
-                        memory.append_user(line)
-
-                        print(f"Chat: reqierment met ({line_ends(line)})")
-
-                        ollama.adapter(prompt=memory.prompt())
-                    else:
-                        print(f"Chat: timeout(inactivity)")
-                    session.reset(microphone)
         return 1
-
-
-def clear():
-    print("\033[2J\033[H", end="")
 
 
 def line_ends(line: str):

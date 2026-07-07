@@ -2,19 +2,18 @@ import os
 import sys
 import socket
 import subprocess
+from time import sleep
 from subprocess import Popen
-from time import sleep, time
 from collections import deque
 from pfspeak.core.repo import SpeechRepo
 from pfspeak.common.dataclasses import (
         Prediction,
         Sentinel,
         WorkRequest)
-
 from multiprocessing import current_process
 from pfspeak.core.runtime.driver import Driver
-from multiprocessing.connection import Connection
 from pfspeak.common.defaults import IPC_AUTHKEY
+from multiprocessing.connection import Connection
 from pfspeak.common.defaults import DEFAULT_APP_SPEC 
 from pfspeak.core.runtime.inference import SpeechModel
 from multiprocessing.connection import Listener, Client
@@ -66,15 +65,11 @@ def worker(host: str, port: int):
                 gen, current_job = None, None
                 continue
 
-            inferance_start = time()
             audio, prediction_duration = Driver.infer(model,
                                                       chunk.phonemes,
                                                       current_job.voice,
                                                       current_job.speed
                                                       )
-
-            print(f"Worker: inference took {time() - inferance_start} seconds")
-
             conn.send(
                     Prediction(
                         audio=audio,

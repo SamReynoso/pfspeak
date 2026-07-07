@@ -4,8 +4,7 @@
 # Pflogger: simple shell based logger.
 #
 # Development note:
-#       This file has exactly 256 lines. No lines should be adde or removed without a corisponding
-#       adjustment to the (zero) extra commented line/s below.
+#       This file has exactly (262) lines which is (Six) lines over the limit.
 
 
 unset DARK_GREY DARK_BLUE LIGHT_BLUE WHITE YELLOW GREEN RED RESET

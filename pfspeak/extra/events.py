@@ -20,7 +20,7 @@ def older_than(event: PfEvent, seconds: float) -> bool:
     provided value other wise returns False
     """
     assert event.recording
-    return time() - event.recording.audio[0].end_time >= seconds
+    return time() - event.recording.audio.end_time >= seconds
 
 
 @has_recording

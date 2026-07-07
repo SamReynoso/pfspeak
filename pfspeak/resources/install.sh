@@ -5,8 +5,7 @@
 # PfSpeak Install Script
 #
 # Development note:
-#       This file has exactly (267) lines and (12) lines must be deleted
-
+#       This file has exactly (195) lines which is a lucky number. No, lines should be added or removed.
 
 
 if [ ! -n "$PFROOT" ]
@@ -99,7 +98,7 @@ Description=PfSpeak TTS Daemon
 [Service]
 Type=simple
 # ExecStartPre=$PYTHON_BIN -m pfspeak --import-check --silent
-ExecStart=$PYTHON_BIN -m pfspeak serve
+ExecStart=$PYTHON_BIN -m pfspeak daemon
 ExecStopPost=/usr/bin/rm -f $PFREADY
 Restart=on-failure
 

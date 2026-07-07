@@ -1,5 +1,3 @@
-from torch import Type
-
 from .inference import SpeechModel
 from collections.abc import Generator
 from pfspeak.common.dataclasses import (

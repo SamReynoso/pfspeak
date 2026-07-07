@@ -56,6 +56,16 @@ class PfEvent:
 
     recording: Recording | None
 
+    _status: str = ""
+
+    @property
+    def status(self):
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = str(value)
+
     @property
     def types(self):
         return self.EventTypes
@@ -64,6 +74,31 @@ class PfEvent:
         return (f"PfEvent(service={self.service}, "
                 f"recording={len(self.recording.text) if self.recording else 0}"
                 ")")
+
+    @property
+    def duration(self):
+        if not self.recording:
+            raise ValueError("Event recording is None")
+        return self.recording.audio.duration
+
+    @property
+    def start_time(self):
+        if not self.recording:
+            raise ValueError("Event recording is None")
+        return self.recording.audio.start_time
+
+    @property
+    def end_time(self):
+        if not self.recording:
+            raise ValueError("Event recording is None")
+        return self.recording.audio.end_time
+
+    @property
+    def text(self):
+        if not self.recording:
+            raise ValueError("Event recording is None")
+        return self.recording.text
+
 
 
 @dataclass(slots=True)
@@ -132,8 +167,8 @@ class PfToken:
     text: str
     start_time: float | None = None
     end_time: float | None = None
-    revision: int | None = 0
-    _len: int | None = 0
+    revision: int | None = None
+    _len: int | None = None
 
     @property
     def identity(self):
@@ -151,7 +186,7 @@ class PfToken:
         `len(PfToken)` and `len(TokenList)` measure phoneme length rather
         than token count.
         """
-        if self._len:
+        if self._len is not None:
             return self._len
         ps_len = len(self.phonemes) if self.phonemes else 0
         self._len = ps_len + len(self.whitespace)
@@ -162,9 +197,11 @@ class PfToken:
         if len(self.text) > 35:
             text = text[:32] + "..."
 
-        return (f"PfToken(len={len(self)}, "
+        return (
+                f"PfToken(len={len(self)}, "
                 f"text='{text}', "
-                f"start_time={self.start_time})"
+                f"start_time={self.start_time}, "
+                f"{self.revision})"
                 )
 
 
@@ -298,6 +335,7 @@ class AudioChunk:
                 start_time=self.start_time,
                 created_ns=self.created_ns)
 
+
 @dataclass(slots=True)
 class Prediction:
     device_id: UUID
@@ -339,6 +377,12 @@ class Audio(list[AudioChunk]):
         return self[0].start_time
 
     @property
+    def end_time(self):
+        if not self:
+            raise RuntimeError("Empty Audio has no start time")
+        return self[-1].end_time
+
+    @property
     def samplerate(self):
         if not self:
             raise RuntimeError("Empty Audio has no samplerate")
@@ -359,7 +403,7 @@ class Audio(list[AudioChunk]):
         if not self:
             raise RuntimeError("Empty Audio has no elapsed time")
 
-        return self[-1].end_time - self[0].start_time
+        return self.end_time - self.start_time
 
     def __add__(self, other: Audio | list) -> Audio:
         _list = super().__add__(other)
@@ -378,7 +422,7 @@ class Recording:
         self.audio: Audio = audio or Audio()
         self.ledger = ledger or  []
         self.apply_timestamp()
-        self.last_stable = 0
+        self.bump_revision_number()
 
     @property
     def text(self):
@@ -392,14 +436,14 @@ class Recording:
         return self.audio.to_waveform()
 
     def revise(self, tokens: TokenList, audio: Audio):
-        self.bump_revision_number(tokens)
+        self.bump_revision_number()
         self.revise_tokens(tokens)
         self.audio += audio
         self.apply_timestamp()
 
-    def bump_revision_number(self, tokens: TokenList):
-        for token in tokens:
-            if token.revision:
+    def bump_revision_number(self):
+        for token in self.tokens:
+            if token.revision is not None:
                 token.revision += 1
             else:
                 token.revision = 0

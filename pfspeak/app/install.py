@@ -3,7 +3,7 @@ import os
 import subprocess
 from importlib.resources import files, as_file
 
-from pfspeak.services import PfSpeakConfig
+from pfspeak.app import PfSpeakConfig
 
 def install(pfconfig: PfSpeakConfig):
     env = os.environ.copy()

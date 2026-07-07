@@ -2,6 +2,7 @@ from enum import StrEnum
 from pathlib import Path
 from dataclasses import dataclass
 from platformdirs import PlatformDirs
+from pfspeak.common.dataclasses import Sentinel
 
 
 class ModelLabels(StrEnum):
@@ -30,6 +31,8 @@ IPC_AUTHKEY = b"pfspeak"
 
 # DEFAULT_LLM = "qwen3:0.6b"
 DEFAULT_LLM = "qwen3-coder:latest"
+
+SENTINEL = Sentinel()
 
 ALIASES = {
         'en-us': 'a',

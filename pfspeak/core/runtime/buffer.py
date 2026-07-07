@@ -24,7 +24,7 @@ class Recognition:
     MAX_LOOKBACK = 99
 
     def __init__(self, device_id: UUID, stream) -> None:
-        self.current = ""
+        self.text = ""
         self.stream = stream
         self.device_id = device_id
         self.lookback: deque = deque()
@@ -35,8 +35,8 @@ class Recognition:
             self.lookback.popleft()
 
     def if_it_is_updated(self, text):
-        if text != self.current:
-            self.current = text
+        if text != self.text:
+            self.text = text
             return self
 
     def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):

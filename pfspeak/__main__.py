@@ -30,6 +30,11 @@ if __name__ == "__main__":
     elif args.command == "import-check":
         ...
 
+    elif args.command == "daemon":
+        from pfspeak.app.daemon import main
+        main()
+
+
     else:
         parser.print_help()
         sys.exit(1)
