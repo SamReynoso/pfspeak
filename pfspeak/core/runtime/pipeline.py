@@ -4,7 +4,7 @@ from subprocess import Popen
 from threading import Thread
 from pfspeak.common.defaults import SENTINEL
 from multiprocessing.connection import Connection
-from pfspeak.common.dataclasses import Prediction, Sentinel, WorkRequest
+from pfspeak.common.dataclasses import Prediction, Sentinel
 
 
 PopWorker = Callable[..., tuple[Popen, Connection]]
@@ -20,14 +20,14 @@ class WorkerAdapter:
 class PipelineConnections:
     def __init__(self,
                  worker: WorkerAdapter,
-                 add_prediction: Callable,
-                 exceptions: Queue,
+                 submit_event: Callable,
+                 submit_exceptions: Callable,
                  ) -> None:
         self.worker = worker
         self.keep_alive = True
-        self.exceptions = exceptions
+        self.submit_exceptions = submit_exceptions
         self.request_queue = Queue()
-        self.add_prediction = add_prediction
+        self.submit_event = submit_event
         self.send_out = self.__as_thread(self.__send_out)
         self.receive_back = self.__as_thread(self.__receive_back)
 
@@ -36,7 +36,7 @@ class PipelineConnections:
             try:
                job() 
             except Exception as e:
-                self.exceptions.put(e)
+                self.submit_exceptions(e)
         return Thread(target=with_exception_handling, daemon=True)
 
     def __send_out(self):
@@ -49,12 +49,7 @@ class PipelineConnections:
             if isinstance(message, Sentinel):
                 self.keep_alive = False
                 return
-            self.add_prediction(message)
-
-    def factory(self):
-        def callback(request: WorkRequest):
-            self.request_queue.put(request)
-        return callback
+            self.submit_event(message.as_event())
 
     def join(self):
         self.request_queue.put(SENTINEL)

@@ -1,96 +1,19 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+from pfspeak.core.types import ServiceTypes
+
 if TYPE_CHECKING:
     from .devices import InputStream
 
 from uuid import UUID
 from queue import Empty, Queue
 from collections.abc import Generator
-from pfspeak.core.runtime.buffer import (
-        AudioRecognizer,
-        Recognition,
-        RecognizerAdapter
-        )
+from pfspeak.common.dataclasses import PfEvent
 from pfspeak.common.g2p import Graphemes2Phonemes
+from pfspeak.core.runtime.buffer import AudioRecognizer
 from pfspeak.common.just_checking import TypeRecognizer
 from pfspeak.core.runtime.pipeline import PipelineConnections, WorkerAdapter
-from pfspeak.common.dataclasses import Audio, PfEvent, Prediction, Recording
-
-
-class PfBackend:
-    @classmethod
-    def is_compatiable(cls, device: InputStream):
-        return issubclass(device.BACKEND, cls)
-
-
-class SttBackend(PfBackend):
-
-    def __init__(self, g2p, event_queue, recognizer: TypeRecognizer) -> None:
-        self.g2p = g2p
-        self.event_queue = event_queue
-        self.recognizer = AudioRecognizer(self.add_prediction)
-        self.recognizer_adapter = RecognizerAdapter(recognizer)
-        self.cycle: dict[UUID, Recording] = {}
-        self.service = PfEvent.EventTypes.STT
-
-    def get_or_create(self, prediction: Recognition) -> Recording:
-
-        device_id = prediction.device_id
-        tokens, audio = self.g2p(prediction.text), Audio(prediction.lookback) 
-
-        if device_id in self.cycle:
-            self.cycle[device_id].revise(tokens, audio)
-
-        else:
-            self.cycle[device_id] = Recording(tokens=tokens, audio=audio)
-
-        self.cycle[device_id].apply_timestamp()
-        return self.cycle[device_id]
-
-    def reset(self, device_id: UUID) -> None:
-        del self.cycle[device_id]
-        self.recognizer.predictions.reset(device_id, self.recognizer_adapter)
-
-    def add_prediction(self, prediction: Recognition) -> None:
-        recording = self.get_or_create(prediction)
-        final = True if self.service is PfEvent.EventTypes.DUCK else False
-        assert recording is not None
-        event = PfEvent(device_id=prediction.device_id,
-                        service=self.service,
-                        recording=recording,
-                        finalized=final,
-                        device=None)
-        self.event_queue.put(event)
-
-    def add_device(self, device: InputStream) -> None:
-        device.callback = self.recognizer.factory(self.recognizer_adapter)
-
-    def mute(self):
-        self.recognizer.conflict()
-        self.service = PfEvent.EventTypes.DUCK
-        self.cycle = {}
-
-    def unmute(self):
-        self.recognizer.restore()
-        self.service = PfEvent.EventTypes.STT
-        self.cycle = {}
-
-class TtsBackend(PfBackend):
-
-    def __init__(self, g2p, events_queue, exceptions, worker) -> None:
-        self.g2p = g2p 
-        self.exceptions = exceptions
-        self.events_queue = events_queue
-        self.pipeline = PipelineConnections(worker,
-                                            self.add_prediction,
-                                            exceptions)
-
-    def add_prediction(self, prediction: Prediction) -> None:
-        self.events_queue.put(prediction.as_event())
-
-    def add_device(self, device: InputStream) -> None:
-        device.callback = self.pipeline.factory()
 
 
 class PfSession:
@@ -102,26 +25,26 @@ class PfSession:
                  ) -> None:
         self.events_queue: Queue[PfEvent] = Queue()
         self.exceptions: Queue[BaseException] = Queue()
+        self.tts = PipelineConnections(worker,
+                                       self.events_queue.put,
+                                       self.exceptions.put)
+        self.stt = AudioRecognizer(g2p,
+                                   recognizer,
+                                   self.events_queue.put,
+                                   self.exceptions.put,
+                                   )
         self.devices: dict[UUID, InputStream] = {}
-        self.tts: TtsBackend = TtsBackend(g2p,
-                                          self.events_queue,
-                                          self.exceptions, worker)
-        self.stt: SttBackend = SttBackend(g2p, self.events_queue, recognizer)
         self.__keep_alive = True
-
-    def add_devices(self, devices):
-        for device in devices:
-            self.add_device(device)
 
     def add_device(self, device: InputStream) -> None:
         if device.device_id in self.devices:
             raise RuntimeError("Duplicate session device")
         self.devices[device.device_id] = device
-        if SttBackend.is_compatiable(device):
-            self.stt.add_device(device)
-        elif TtsBackend.is_compatiable(device):
-            self.tts.add_device(device)
-        device.exceptions = self.exceptions
+        device.submit_exceptions = self.exceptions.put
+        if device.service is ServiceTypes.STT:
+            device.callback = self.stt.factory(self.stt.recognizer_adapter)
+        else:
+            device.callback = self.events_queue.put
 
     def reset(self, device: InputStream) -> None:
         self.stt.reset(device.device_id)
@@ -136,47 +59,29 @@ class PfSession:
         self.__keep_alive = False
 
     def __iter__(self) -> Generator[PfEvent]:
-        event: PfEvent | None = None
         while self.__keep_alive:
             if not self.exceptions.empty():
                 raise self.exceptions.get_nowait()
-
+            for device in self.devices.values():
+                if device.active:
+                    yield device.active 
             try:
-                event = self.events_queue.get(timeout=0.015)
-                assert event.device_id
-                event.device =  self.devices[event.device_id]
-                if not event.finalized:
-                    event.device.active = event
-                yield event
-
+                yield self.events_queue.get(timeout=0.015)
             except Empty:
-                for device in self.devices.values():
-                    if device.active:
-                        yield device.active 
-                yield PfEvent(
-                        service=PfEvent.EventTypes.TICKET,
-                        finalized=False,
-                        device_id=None,
-                        recording=None,
-                        device=None)
+                yield PfEvent.as_ticket()
 
     def __enter__(self):
-        self.tts.pipeline.start()
+        self.tts.start()
         for device in self.devices.values():
             device.start()
         return self
 
     def __exit__(self, *args):
-
-        self.tts.pipeline.join()
-
+        self.tts.join()
         for device in self.devices.values():
             device.stop()
-
         if args[1] is not None:
             return False
-
         if not self.exceptions.empty():
             raise self.exceptions.get_nowait()
-
         return False

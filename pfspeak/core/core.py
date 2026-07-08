@@ -16,7 +16,7 @@ from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from pfspeak.core.devices import Devices, Hook, InputStream
 from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
 from pfspeak.core.asset import RecognizerAsset, follow_policy
-from pfspeak.core.session import PfSession, SttBackend, TtsBackend
+from pfspeak.core.session import PfSession
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
@@ -41,7 +41,7 @@ class PfSpeak:
         self.__print_lines: list[str] = []
         self.__cancel_playback = False
 
-    def run(self, app: PfApp, *devices):
+    def run(self, app: PfApp, *devices: InputStream):
         with self.streaming(*devices) as session:
             for event in session:
                 app(session, event)
@@ -50,14 +50,20 @@ class PfSpeak:
         build(self.__app)
 
         tts_enabled = False
+        stt_enabled = False
         for device in devices:
 
-            if SttBackend.is_compatiable(device):
-                follow_policy(self.__app, RecognizerRepo(), ServiceTypes.STT) 
-
-            elif TtsBackend.is_compatiable(device):
+            if device.service is ServiceTypes.STT and not tts_enabled:
                 tts_enabled = True
                 follow_policy(self.__app, SpeechRepo(), ServiceTypes.TTS)
+                if stt_enabled:
+                    break
+
+            if device.service is ServiceTypes.TTS and not tts_enabled:
+                tts_enabled = True
+                follow_policy(self.__app, RecognizerRepo(), ServiceTypes.STT) 
+                if stt_enabled:
+                    break
 
         g2p = Graphemes2Phonemes()
         worker_adapter = WorkerAdapter(worker.start)
@@ -65,7 +71,8 @@ class PfSpeak:
         recognizer = recognizer_asset.load(ListenParams())
 
         self.session = PfSession(g2p, worker_adapter, recognizer)
-        self.session.add_devices(devices)
+        for device in devices:
+            self.session.add_device(device)
 
         if tts_enabled:
             device = Hook()
@@ -78,7 +85,6 @@ class PfSpeak:
         if not self.__hook:
             msg = "This session does not have a TTS worker running"
             raise RuntimeError(msg)
-
         self.__hook.voice = voice
         self.__hook.speed = speed
         self.__hook.adapter(text)
@@ -165,8 +171,6 @@ class PfSpeak:
         n = len(chunk)
         outdata[:n, 0] = chunk
         self.__active.cursor += n
-
-
 
         if self.__active.cursor >= len(self.__active.waveform):
             self.__active = None

@@ -1,6 +1,6 @@
 from uuid import UUID
 from collections import deque
-from pfspeak.common.dataclasses import AudioChunk
+from pfspeak.common.dataclasses import Audio, AudioChunk, PfEvent, Recording
 from pfspeak.common.just_checking import TypeRecognizer
 
 
@@ -66,10 +66,44 @@ class PredictionBank:
 
 class AudioRecognizer:
 
-    def __init__(self, add_prediction) -> None:
-        self.add_prediction = add_prediction
+    def __init__(self, g2p, recognizer, submit_event, add_prediction) -> None:
+        self.g2p = g2p
+        self.recognizer_adapter = RecognizerAdapter(recognizer)
+
+        self.cycle: dict[UUID, Recording] = {}
         self.__suspended_predictions = None
         self.predictions: PredictionBank = PredictionBank()
+
+        self.submit_event = submit_event
+        self.add_prediction = add_prediction
+
+        self.service = PfEvent.EventTypes.STT
+
+    def get_or_create(self, prediction: Recognition) -> Recording:
+
+        device_id = prediction.device_id
+        tokens, audio = self.g2p(prediction.text), Audio(prediction.lookback) 
+
+        if device_id in self.cycle:
+            self.cycle[device_id].revise(tokens, audio)
+
+        else:
+            self.cycle[device_id] = Recording(tokens=tokens, audio=audio)
+
+        self.cycle[device_id].apply_timestamp()
+        return self.cycle[device_id]
+
+    def __add_prediction(self, prediction: Recognition) -> None:
+        recording = self.get_or_create(prediction)
+        final = True if self.service is PfEvent.EventTypes.DUCK else False
+        assert recording is not None
+        event = PfEvent(device_id=prediction.device_id,
+                        service=self.service,
+                        recording=recording,
+                        finalized=final,
+                        request=None,
+                        device=None)
+        self.submit_event(event)
 
     def conflict(self):
         self.__suspended_predictions = self.predictions
@@ -81,9 +115,23 @@ class AudioRecognizer:
         self.predictions = self.__suspended_predictions
         self.__suspended_predictions = None
 
+    def mute(self):
+        self.conflict()
+        self.service = PfEvent.EventTypes.DUCK
+        self.cycle = {}
+
+    def unmute(self):
+        self.restore()
+        self.service = PfEvent.EventTypes.STT
+        self.cycle = {}
+
+    def reset(self, device_id: UUID) -> None:
+        del self.cycle[device_id]
+        self.predictions.reset(device_id, self.recognizer_adapter)
+
     def factory(self, recognizer: RecognizerAdapter):
         def callback(chunk: AudioChunk):
             prediction = self.predictions.feed(chunk, recognizer)
             if prediction:
-                self.add_prediction(prediction)
+                self.__add_prediction(prediction)
         return callback

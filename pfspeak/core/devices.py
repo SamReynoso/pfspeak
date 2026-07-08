@@ -14,15 +14,14 @@ from pfspeak.common.dataclasses import (
         PfStatus,
         AudioChunk,
         Sentinel,
-        WorkRequest,
-        )
+        WorkRequest)
+from pfspeak.core.types import ServiceTypes
 from pfspeak.extra.voices import VoiceEnum
 from pfspeak.core.param import AudioChannels
 from pfspeak.common.defaults import SENTINEL
 from pfspeak.common.types import DeferrableDef
 from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.common.requests import OllamaRequest
-from pfspeak.core.session import SttBackend, TtsBackend
 from pfspeak.common.types import AudioCallback, PathLike
 
 
@@ -38,10 +37,10 @@ class StreamWorkers:
             try:
                     job() 
             except Exception as exc:
-                if stream.exceptions is None:
+                if stream.submit_exceptions is None:
                     raise RuntimeError("Device exceptons queue is None")
-                assert stream.exceptions
-                stream.exceptions.put(exc)
+                assert stream.submit_exceptions
+                stream.submit_exceptions(exc)
 
         return Thread(target=with_exception_handling, daemon=True)
 
@@ -57,21 +56,21 @@ class StreamWorkers:
 
 class InputStream(ABC):
 
-    BACKEND: type[TtsBackend] | type[SttBackend]
-
     def __init__(self, callback: DeferrableDef = None) -> None:
         super().__init__()
 
         self.device_id = uuid.uuid4()
         self.status = PfStatus()
-        self._streaming = False
+        self.service: ServiceTypes
 
         self.request: Queue[str|Sentinel] = Queue()
         self.workers = StreamWorkers(self)
         self.callback: DeferrableDef = callback
-        self.exceptions: Queue | None = None
+        self.submit_exceptions: DeferrableDef = None
 
         self._active: PfEvent | None = None
+
+        self._streaming = False
 
     @property
     def streaming(self):
@@ -124,9 +123,8 @@ class EndOfResponse:
 
 EOF = EndOfResponse()
 
-class TTSStream(InputStream):
 
-    BACKEND = TtsBackend
+class TTSStream(InputStream):
 
     def __init__(self,
                  voice: VoiceEnum | str | None,
@@ -135,13 +133,13 @@ class TTSStream(InputStream):
                  g2p_backend: Graphemes2Phonemes | None = None,
                  ) -> None:
         super().__init__(callback)
+        self.service = ServiceTypes.TTS
         self.voice = voice
         self.speed = speed
         self.g2p = g2p_backend or Graphemes2Phonemes()
         self.last = ""
 
     def monitor(self):
-        assert self.callback
         while self.streaming:
 
             line: str | Sentinel = self.request.get()
@@ -156,12 +154,19 @@ class TTSStream(InputStream):
 
             self.last = line
             assert line, line
+            assert self.callback
             self.callback(
-                    WorkRequest(
+                    PfEvent(
+                        device=self,
                         device_id=self.device_id,
-                        tokens=self.g2p(line),
-                        voice=self.voice,
-                        speed=self.speed
+                        recording=None,
+                        finalized=False,
+                        service=PfEvent.EventTypes.TTS,
+                        request=WorkRequest(
+                            device_id=self.device_id,
+                            tokens=self.g2p(line),
+                            voice=self.voice,
+                            speed=self.speed)
                         )
                     )
 
@@ -216,7 +221,6 @@ class Ollama(TTSStream):
         prompt = event.recording.text if event and event.recording else prompt
         if prompt is None:
             raise ValueError("Ollama adapter requires event or prompt")
-
         if voice:
             self.voice = voice
         if speed:
@@ -256,7 +260,6 @@ class Fifo(TTSStream):
                  ) -> None:
         super().__init__(voice, speed, callback, g2p_backend)
         self.path = Path(path)
-        self.callback = callback 
         self.exists_ok = exists_ok
 
     def as_file(self) -> Generator[str|EndOfResponse|Sentinel]:
@@ -296,7 +299,6 @@ class Tcp(TTSStream):
         super().__init__(voice, speed, callback, g2p_backend)
         self.host = host
         self.port = port
-        self.callback=callback
         self.conn: socket.socket | None = None
         self.server: socket.socket | None = None
 
@@ -347,14 +349,13 @@ class Hook(TTSStream):
 
 class STTStream(InputStream):
 
-    BACKEND = SttBackend
-
     def __init__(self,
                  voice: VoiceEnum | str | None = None,
                  speed: float = 1,
                  callback: DeferrableDef = None,
                  ) -> None:
         super().__init__(callback=callback)
+        self.service = ServiceTypes.STT
         self.voice = voice
         self.speed = speed
 
@@ -370,7 +371,7 @@ class Microphone(STTStream):
                  callback: AudioCallback | None = None,
                  channels: AudioChannels | int = AudioChannels.MONO
                  ) -> None:
-        super().__init__(voice=voice, speed=speed)
+        super().__init__(voice=voice, speed=speed, callback=callback)
         self.channels=channels
         self.device = device or default_input()
         self.samplerate = samplerate or default_samplerate(self.device)
@@ -378,7 +379,6 @@ class Microphone(STTStream):
 
         self.stream = None
         self.status: PfStatus = PfStatus()
-        self.callback: DeferrableDef = callback
 
     def monitor(self):
         # A feature may one day live here.
@@ -399,17 +399,16 @@ class Microphone(STTStream):
 
         def wrapper(indata, *_):
 
-
-            assert self.callback
             audio_chunk = AudioChunk(
                     waveform=mono(indata),
                     device_id=self.device_id,
                     samplerate=self.samplerate)
 
             if self.samplerate != 16_000:
-                self.callback(audio_chunk.resample(16_000))
-            else:
-                self.callback(audio_chunk)
+                audio_chunk = audio_chunk.resample(16_000)
+
+            assert self.callback
+            self.callback(audio_chunk)
 
         import sounddevice
         self.stream = sounddevice.InputStream(
@@ -423,14 +422,12 @@ class Microphone(STTStream):
         return self.stream
 
     def __repr__(self):
-        return (
-                "Microphone:\n"
+        return ("Microphone:\n"
                 f"  initialized     {self.stream is not None}\n"
                 f"  samplerate      {self.samplerate}\n"
                 f"  blocksize       {self.blocksize}\n"
                 f"  channels        {self.channels}\n"
-                f"  device          {self.device}"
-                )
+                f"  device          {self.device}")
 
     def stop(self):
         if self.stream and self.stream.active:
@@ -484,5 +481,3 @@ class Devices:
     Fifo = Fifo
     Ollama = Ollama
     Microphone = Microphone
-
-

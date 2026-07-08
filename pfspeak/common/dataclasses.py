@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
 
@@ -18,44 +19,26 @@ from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
 
 @dataclass(slots=True)
-class PfStatus:
-    sent: int = 0
-    received: int = 0
-    line: str = ""
-
-
-@dataclass(frozen=True)
-class CudaSupport:
-    available: bool
-    supported: bool
-
-
-@dataclass(order=True)
-class Playback:
-    priority: int
-    sequence: int
-
-    waveform: NDArray[Float32] = field(compare=False)
-    samplerate: int = field(compare=False)
-    cursor: int = field(default=0, compare=False)
-
-
-@dataclass(slots=True)
 class PfEvent:
 
     class EventTypes(StrEnum):
+        TEXT = "text"
         TTS = "tts"
+
+        AUDIO = "audio"
         STT = "stt"
+
         DUCK = "duck"
         TICKET = "ticket"
 
-    finalized: bool
+    device: InputStream | None
     device_id: UUID | None
     service: EventTypes
-    device: InputStream | None
 
+    request: WorkRequest | None
     recording: Recording | None
 
+    finalized: bool
     _status: str = ""
 
     @property
@@ -99,6 +82,15 @@ class PfEvent:
             raise ValueError("Event recording is None")
         return self.recording.text
 
+    @classmethod
+    def as_ticket(cls):
+        return cls(device=None,
+                   device_id=None,
+                   recording=None,
+                   finalized=True,
+                   request=None,
+                   service=PfEvent.EventTypes.TICKET)
+
 
 
 @dataclass(slots=True)
@@ -135,30 +127,159 @@ class WorkRequest:
                 voice=voice,
                 speed=speed)
 
-@dataclass(slots=True)
-class WorkerMessageBase:
-    op: Literal["stop", "speak"]
 
+class Recording:
 
-@dataclass(slots=True)
-class Sentinel(WorkerMessageBase):
-    op: Literal["stop", "speak"] = "stop"
+    def __init__(self,
+                 tokens: TokenList | None = None,
+                 audio: Audio | None = None,
+                 *,
+                 ledger: list[int] | None = None,
+                 ) -> None:
+        self.tokens: TokenList = tokens or TokenList()
+        self.audio: Audio = audio or Audio()
+        self.ledger = ledger or  []
+        self.apply_timestamp()
+        self.bump_revision_number()
 
+    @property
+    def text(self):
+        return self.tokens.text
 
-@dataclass(slots=True)
-class WorkerMessage(WorkerMessageBase):
-    device_id: UUID
-    tokens: TokenList
-    voice: VoiceEnum | str
-    speed: float = 1 
+    @property
+    def phonemes(self):
+        return self.tokens.phonemes
 
-    def __repr__(self) -> str:
-        return (f"WorkerMessage(op={self.op}, "
-                f"tokens={len(self.tokens)}, "
-                f"voice='{str(self.voice)}', "
-                f"speed={self.speed})"
+    def to_waveform(self):
+        return self.audio.to_waveform()
+
+    def revise(self, tokens: TokenList, audio: Audio):
+        self.bump_revision_number()
+        self.revise_tokens(tokens)
+        self.audio += audio
+        self.apply_timestamp()
+
+    def bump_revision_number(self):
+        for token in self.tokens:
+            if token.revision is not None:
+                token.revision += 1
+            else:
+                token.revision = 0
+
+    def apply_timestamp(self):
+
+        new_audio = self.audio[len(self.ledger):]
+
+        pending = [t for t in self.tokens if t.start_time is None]
+        if not pending:
+            return
+        if not new_audio:
+            raise RuntimeError("Some tokens are missing timestamps")
+        start = new_audio[0].start_time
+        end = new_audio[-1].end_time
+        times = float_range(start, end, self.tokens.count + 1,)
+
+        for token, start_ts, end_ts in zip(pending, times, times[1:]):
+            token.start_time = start_ts
+            token.end_time = end_ts
+
+        first_pending = self.tokens.count - len(pending)
+
+        self.ledger.extend(
+                first_pending + min(
+                    (i * len(pending)) // len(new_audio),
+                    len(pending) - 1,
+                    )
+                for i in range(len(new_audio))
                 )
 
+    def normalize_timestamps(self):
+        if not self.tokens:
+            return
+        start = self.tokens[0].start_time
+        assert start
+        for token in self.tokens:
+            if token.start_time is None or token.end_time is None:
+                raise RuntimeError(
+                        "Can not normalize token with null timestamps"
+                        )
+            token.start_time -= start
+            token.end_time -= start
+
+    def revise_tokens(self, new: TokenList) -> None:
+        old_id = [t.identity for t in self.tokens]
+        new_id = [t.identity for t in new]
+
+        matcher = SequenceMatcher(a=old_id, b=new_id)
+        merged = []
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            match tag:
+                case "equal":
+                    merged.extend(self.tokens[i1:i2])
+                case "replace":
+                    merged.extend(new[j1:j2])
+                case "insert":
+                    merged.extend(new[j1:j2])
+                case "delete":
+                    pass
+        self.tokens = TokenList(merged)
+
+    def head(self, index: int):
+        audio = Audio(
+                [self.audio[i] for i, t in enumerate(self.ledger) if t < index]
+                )
+        return Recording(
+                tokens=self.tokens[:index],
+                ledger=self.ledger[:index],
+                audio=audio)
+
+    def tail(self, index: int):
+        audio = Audio(
+                [self.audio[i] for i, t in enumerate(self.ledger) if t >= index]
+                )
+        return Recording(
+                tokens=self.tokens[index:],
+                ledger=self.ledger[index:],
+                audio=audio)
+
+    def __add__(self, other: Recording) -> Recording:
+        return Recording(
+                tokens=self.tokens + other.tokens,
+                audio=self.audio + other.audio,
+                ledger=self.ledger + other.ledger,
+                )
+
+    def __eq__(self, value: object, /) -> bool:
+        if isinstance(value, str):
+            return (
+                    self.text.casefold() == value.casefold
+                    or
+                    self.phonemes.casefold() == value.casefold()
+                    )
+        elif isinstance(value, Recording):
+            return self.tokens == value.tokens
+
+        return NotImplemented
+
+    @classmethod
+    def join(cls, recordings: Iterable[Recording]) -> Recording:
+        recordings = list(recordings)
+        if not recordings:
+            raise ValueError("Cannot join empty recordings iterable")
+        out = recordings[0]
+        for r in recordings[1:]:
+            out += r
+        return out
+
+    def __repr__(self) -> str:
+        return (
+            f"Recording("
+            f"duration={self.audio.duration if self.audio else 'empty'}, "
+            f"text={len(self.text)}, "
+            f"phonemes={len(self.phonemes)}"
+            f")"
+        )
 
 @dataclass(slots=True)
 class PfToken:
@@ -336,34 +457,6 @@ class AudioChunk:
                 created_ns=self.created_ns)
 
 
-@dataclass(slots=True)
-class Prediction:
-    device_id: UUID
-    tokens: TokenList
-    audio: TypeTensor
-    pred_dur: TypeTensor
-
-    def as_event(self) -> PfEvent:
-        apply_prediction_duration_timestamps(self.tokens, self.pred_dur)
-        return PfEvent(
-                device=None,
-                finalized=True,
-                device_id=self.device_id,
-                service=PfEvent.EventTypes.TTS,
-                recording=Prediction.recording(self),
-                )
-
-    @staticmethod
-    def recording(prediction):
-        # TODO: ...
-        waveform = array(prediction.audio).astype(float32)
-        chunk = AudioChunk(device_id=prediction.device_id,
-                           waveform=waveform,
-                           samplerate=24_000,
-                           start_time=0)
-        return Recording(tokens=prediction.tokens, audio=Audio([chunk])) 
-
-
 class Audio(list[AudioChunk]):
 
     def to_waveform(self):
@@ -410,158 +503,6 @@ class Audio(list[AudioChunk]):
         return Audio(_list)
 
 
-class Recording:
-
-    def __init__(self,
-                 tokens: TokenList | None = None,
-                 audio: Audio | None = None,
-                 *,
-                 ledger: list[int] | None = None,
-                 ) -> None:
-        self.tokens: TokenList = tokens or TokenList()
-        self.audio: Audio = audio or Audio()
-        self.ledger = ledger or  []
-        self.apply_timestamp()
-        self.bump_revision_number()
-
-    @property
-    def text(self):
-        return self.tokens.text
-
-    @property
-    def phonemes(self):
-        return self.tokens.phonemes
-
-    def to_waveform(self):
-        return self.audio.to_waveform()
-
-    def revise(self, tokens: TokenList, audio: Audio):
-        self.bump_revision_number()
-        self.revise_tokens(tokens)
-        self.audio += audio
-        self.apply_timestamp()
-
-    def bump_revision_number(self):
-        for token in self.tokens:
-            if token.revision is not None:
-                token.revision += 1
-            else:
-                token.revision = 0
-
-    def apply_timestamp(self):
-
-        new_audio = self.audio[len(self.ledger):]
-
-        pending = [t for t in self.tokens if t.start_time is None]
-        if not pending:
-            return
-        if not new_audio:
-            raise RuntimeError("Some tokens are missing timestamps")
-        start = new_audio[0].start_time
-        end = new_audio[-1].end_time
-        times = float_range(start, end, self.tokens.count + 1,)
-
-        for token, start_ts, end_ts in zip(pending, times, times[1:]):
-            token.start_time = start_ts
-            token.end_time = end_ts
-
-        first_pending = self.tokens.count - len(pending)
-
-        self.ledger.extend(
-                first_pending + min(
-                    (i * len(pending)) // len(new_audio),
-                    len(pending) - 1,
-                    )
-                for i in range(len(new_audio))
-                )
-
-    def normalize_timestamps(self):
-        if not self.tokens:
-            return
-        start = self.tokens[0].start_time
-        assert start
-        for token in self.tokens:
-            if token.start_time is None or token.end_time is None:
-                raise RuntimeError(
-                        "Can not normalize token with null timestamps"
-                        )
-            token.start_time -= start
-            token.end_time -= start
-
-    def revise_tokens(self, new: TokenList) -> None:
-        old_id = [t.identity for t in self.tokens]
-        new_id = [t.identity for t in new]
-
-        matcher = SequenceMatcher(a=old_id, b=new_id)
-        merged = []
-
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            match tag:
-                case "equal":
-                    merged.extend(self.tokens[i1:i2])
-                case "replace":
-                    merged.extend(new[j1:j2])
-                case "insert":
-                    merged.extend(new[j1:j2])
-                case "delete":
-                    pass
-        self.tokens = TokenList(merged)
-
-    def head(self, index: int):
-        audio = Audio(
-                [self.audio[i] for i, t in enumerate(self.ledger) if t < index]
-                )
-        return Recording(
-                tokens=self.tokens[:index],
-                ledger=self.ledger[:index],
-                audio=audio)
-
-    def tail(self, index: int):
-        audio = Audio(
-                [self.audio[i] for i, t in enumerate(self.ledger) if t >= index]
-                )
-        return Recording(
-                tokens=self.tokens[index:],
-                ledger=self.ledger[index:],
-                audio=audio)
-
-    def __add__(self, other: Recording) -> Recording:
-        return Recording(
-                tokens=self.tokens + other.tokens,
-                audio=self.audio + other.audio,
-                ledger=self.ledger + other.ledger,
-                )
-
-    def __eq__(self, value: object, /) -> bool:
-        if isinstance(value, str):
-            return (
-                    self.text.casefold() == value.casefold
-                    or
-                    self.phonemes.casefold() == value.casefold()
-                    )
-        elif isinstance(value, Recording):
-            return self.tokens == value.tokens
-
-        return NotImplemented
-
-    @classmethod
-    def join(cls, recordings: Iterable[Recording]) -> Recording:
-        recordings = list(recordings)
-        if not recordings:
-            raise ValueError("Cannot join empty recordings iterable")
-        out = recordings[0]
-        for r in recordings[1:]:
-            out += r
-        return out
-
-    def __repr__(self) -> str:
-        return (
-            f"Recording("
-            f"duration={self.audio.duration if self.audio else 'empty'}, "
-            f"text={len(self.text)}, "
-            f"phonemes={len(self.phonemes)}"
-            f")"
-        )
 
 def float_range(start: float, end: float, count: int):
     if count <= 2:
@@ -570,52 +511,79 @@ def float_range(start: float, end: float, count: int):
     return [start + i * step for i in range(count)]
 
 
-def apply_prediction_duration_timestamps(
-        tokens: TokenList,
-        prediction_duration: TypeTensor
-        ) -> None:
-    """
-    Attach timestamps to each token using the model's predicted durations.
+@dataclass(slots=True)
+class PfStatus:
+    sent: int = 0
+    received: int = 0
+    line: str = ""
 
-    Walk the predicted durations from left to right. Trailing whitespace is
-    split evenly between the current token and the next token.
-    """
 
-    if len(prediction_duration) < 3:
-        return
+@dataclass(frozen=True)
+class CudaSupport:
+    available: bool
+    supported: bool
 
-    frames_per_second = 80
-    next_start = max(0, prediction_duration[0].item() - 3) * 2
-    index = 1
 
-    for token in tokens:
+@dataclass(order=True)
+class Playback:
+    priority: int
+    sequence: int
 
-        if index >= len(prediction_duration) - 1:
-            break
+    waveform: NDArray[Float32] = field(compare=False)
+    samplerate: int = field(compare=False)
+    cursor: int = field(default=0, compare=False)
 
-        if not token.phonemes:
-            if token.whitespace:
-                index += 1
-                next_start += prediction_duration[index].item() * 2
-                index += 1
-            continue
 
-        phoneme_end = index + len(token.phonemes)
+@dataclass(slots=True)
+class Prediction:
+    device_id: UUID
+    tokens: TokenList
+    audio: TypeTensor
+    pred_dur: TypeTensor
 
-        if phoneme_end >= len(prediction_duration):
-            break
+    def as_event(self) -> PfEvent:
+        return PfEvent(
+                device=None,
+                finalized=True,
+                device_id=self.device_id,
+                service=PfEvent.EventTypes.TTS,
+                recording=Prediction.recording(self),
+                request=None,
+                )
 
-        token.start_time = next_start / frames_per_second
-        token_duration = prediction_duration[index:phoneme_end].sum().item() * 2
-        token_end = next_start + token_duration
-        index = phoneme_end
+    @staticmethod
+    def recording(prediction):
+        # TODO: ...
+        waveform = array(prediction.audio).astype(float32)
+        chunk = AudioChunk(device_id=prediction.device_id,
+                           waveform=waveform,
+                           samplerate=24_000,
+                           start_time=0)
+        return Recording(tokens=prediction.tokens, audio=Audio([chunk])) 
 
-        if token.whitespace:
-            half_whitespace = prediction_duration[phoneme_end].item()
-            token_end += half_whitespace
-            next_start = token_end + half_whitespace
-            index += 1
-        else:
-            next_start = token_end
 
-        token.end_time = token_end / frames_per_second
+@dataclass(slots=True)
+class WorkerMessageBase:
+    op: Literal["stop", "speak"]
+
+
+@dataclass(slots=True)
+class Sentinel(WorkerMessageBase):
+    op: Literal["stop", "speak"] = "stop"
+
+
+@dataclass(slots=True)
+class WorkerMessage(WorkerMessageBase):
+    device_id: UUID
+    tokens: TokenList
+    voice: VoiceEnum | str
+    speed: float = 1 
+
+    def __repr__(self) -> str:
+        return (f"WorkerMessage(op={self.op}, "
+                f"tokens={len(self.tokens)}, "
+                f"voice='{str(self.voice)}', "
+                f"speed={self.speed})"
+                )
+
+
