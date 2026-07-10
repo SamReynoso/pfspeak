@@ -1,4 +1,5 @@
 from enum import StrEnum
+
 from pathlib import Path
 from dataclasses import dataclass
 from platformdirs import PlatformDirs
@@ -29,8 +30,8 @@ REMOTES = {
 
 IPC_AUTHKEY = b"pfspeak"
 
-# DEFAULT_LLM = "qwen3:0.6b"
-DEFAULT_LLM = "qwen3-coder:latest"
+DEFAULT_LLM = "qwen3:0.6b"
+LLM_KEEP_ALIVE = "5m"
 
 SENTINEL = Sentinel()
 
@@ -119,5 +120,4 @@ DEFAULT_APP_SPEC = AppSpec(
         data_dir=Path(_platform_dirs.user_data_dir),
         cache_dir=Path(_platform_dirs.user_cache_dir),
         config_dir=Path(_platform_dirs.user_config_dir),
-        config_file=Path(_platform_dirs.user_config_dir) / f"{_app_name}.toml",
-        )
+        config_file=Path(_platform_dirs.user_config_dir) / f"{_app_name}.toml")

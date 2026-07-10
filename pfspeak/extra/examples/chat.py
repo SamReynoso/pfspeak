@@ -82,11 +82,11 @@ from pfspeak.core import devices
 from pfspeak.extra import events
 from pfspeak.common import dataclasses
 from pfspeak.core.session import PfSession
-from pfspeak.core import Microphone, Ollama
 from pfspeak.common.dataclasses import PfEvent
 from pfspeak.common.defaults import DEFAULT_LLM
-from pfspeak.core.runtime import buffer, pipeline
+from pfspeak.core.runtime import buffer, marshal 
 from pfspeak.common.requests import OllamaRequest
+from pfspeak.core.devices import Microphone, Ollama
 
 
 class Mem:
@@ -95,7 +95,7 @@ class Mem:
     CONTEXT = [
             dataclasses,
             buffer,
-            pipeline,
+            marshal,
             PfSession,
             devices,
             PfSpeak,
@@ -136,8 +136,9 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
 
     ollama = Ollama(model, voice=voice)
     microphone = Microphone(samplerate=samplerate)
+    fifo = devices.Fifo("./input.pipe", voice="bm_lewis", exists_ok=True)
     pf = PfSpeak()
-    with pf.streaming(microphone, ollama) as session:
+    with pf.streaming(microphone, ollama, fifo) as session:
         for e in session:
 
             pf.play()
@@ -177,9 +178,13 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
                         pf.print("Chat: timeout(inactivity)")
                     session.reset(microphone)
 
-            elif e.device == ollama:
+            elif e.device is ollama:
                 memory.append_chat(e)
                 pf.play(e)
+
+            elif e.device is fifo:
+                pf.print("playing fifo event")
+                pf.play(e, priority=1)
 
         return 1
 

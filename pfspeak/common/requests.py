@@ -3,6 +3,8 @@ import time
 import requests
 from dataclasses import dataclass
 
+from pfspeak.common.defaults import LLM_KEEP_ALIVE
+
 
 @dataclass
 class OllamaRequest:
@@ -25,7 +27,7 @@ class OllamaRequest:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": self.stream,
-                "keep_alive": "30m",
+                "keep_alive": LLM_KEEP_ALIVE,
                 }
         r = requests.post(url, json=json, stream=self.stream)
         r.raise_for_status()

@@ -1,7 +1,9 @@
+from typing import Callable
 from uuid import UUID
 from collections import deque
-from pfspeak.common.dataclasses import Audio, AudioChunk, PfEvent, Recording
+#from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.common.just_checking import TypeRecognizer
+from pfspeak.common.dataclasses import Audio, AudioChunk, PfEvent, Recording
 
 
 class RecognizerAdapter:
@@ -44,6 +46,10 @@ class Recognition:
         self.append(chunk)
         return self.if_it_is_updated(text)
 
+    def __repr__(self) -> str:
+        return (f"Recognition(text-length:{len(self.text)}, "
+                f"lookback-count:{len(self.lookback)})")
+
 
 class PredictionBank:
 
@@ -56,8 +62,8 @@ class PredictionBank:
         return self.__predictions[device_id]
 
     def reset(self, device_id: UUID, recognizer: RecognizerAdapter):
-        prediction = Recognition(device_id, recognizer.create_stream())
-        self.__predictions[device_id] = prediction
+        stream = recognizer.create_stream()
+        self.__predictions[device_id] = Recognition(device_id, stream)
 
     def feed(self, chunk: AudioChunk, recognizer: RecognizerAdapter):
         device_id = chunk.device_id
@@ -66,7 +72,12 @@ class PredictionBank:
 
 class AudioRecognizer:
 
-    def __init__(self, g2p, recognizer, submit_event, add_prediction) -> None:
+    def __init__(self,
+                 g2p:  Graphemes2Phonemes,
+                 recognizer: TypeRecognizer,
+                 submit_event: Callable,
+                 add_prediction: Callable
+                 ) -> None:
         self.g2p = g2p
         self.recognizer_adapter = RecognizerAdapter(recognizer)
 
@@ -82,7 +93,8 @@ class AudioRecognizer:
     def get_or_create(self, prediction: Recognition) -> Recording:
 
         device_id = prediction.device_id
-        tokens, audio = self.g2p(prediction.text), Audio(prediction.lookback) 
+        tokens = self.g2p(prediction.text)
+        audio = Audio(prediction.lookback) 
 
         if device_id in self.cycle:
             self.cycle[device_id].revise(tokens, audio)
@@ -95,12 +107,11 @@ class AudioRecognizer:
 
     def __add_prediction(self, prediction: Recognition) -> None:
         recording = self.get_or_create(prediction)
-        final = True if self.service is PfEvent.EventTypes.DUCK else False
         assert recording is not None
         event = PfEvent(device_id=prediction.device_id,
                         service=self.service,
                         recording=recording,
-                        finalized=final,
+                        finalized=False,
                         request=None,
                         device=None)
         self.submit_event(event)

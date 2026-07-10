@@ -1,10 +1,7 @@
 from .inference import SpeechModel
 from collections.abc import Generator
-from pfspeak.common.dataclasses import (
-        PfToken,
-        TokenList,
-        )
 from pfspeak.common.just_checking import TypeTensor
+from pfspeak.common.dataclasses import PfToken, TokenList
 
 
 ModelOutput = tuple[TypeTensor, TypeTensor]

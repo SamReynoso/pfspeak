@@ -5,28 +5,22 @@ import subprocess
 from time import sleep
 from subprocess import Popen
 from collections import deque
-from pfspeak.core.repo import SpeechRepo
-from pfspeak.common.dataclasses import (
-        Prediction,
-        Sentinel,
-        TokenList,
-        WorkRequest)
 from multiprocessing import current_process
-from pfspeak.core.runtime.driver import Driver
-from pfspeak.common.defaults import IPC_AUTHKEY
 from multiprocessing.connection import Connection
-from pfspeak.common.just_checking import TypeTensor
-from pfspeak.common.defaults import DEFAULT_APP_SPEC 
-from pfspeak.core.runtime.inference import SpeechModel
 from multiprocessing.connection import Listener, Client
+
 
 
 PopWorkerOutput = tuple[Popen, Connection]
 
 
-
-
 def worker(host: str, port: int):
+    from pfspeak.core.repo import SpeechRepo
+    from pfspeak.core.runtime.driver import Driver
+    from pfspeak.common.defaults import IPC_AUTHKEY
+    from pfspeak.common.defaults import DEFAULT_APP_SPEC 
+    from pfspeak.core.runtime.inference import SpeechModel
+    from pfspeak.common.dataclasses import Prediction, Sentinel, WorkRequest
 
     print(f"TTS worker: pid={os.getpid()}")
 
@@ -90,6 +84,7 @@ def worker(host: str, port: int):
 
 
 def start() -> PopWorkerOutput:
+    from pfspeak.common.defaults import IPC_AUTHKEY
 
     print(f"Main: pid={os.getpid()}")
 
@@ -134,10 +129,7 @@ def shutdown(process):
         print("TTS worker: terminated")
 
 
-def apply_prediction_duration_timestamps(
-        tokens: TokenList,
-        prediction_duration: TypeTensor
-        ) -> None:
+def apply_prediction_duration_timestamps(tokens, prediction_duration) -> None:
     """
     Attach timestamps to each token using the model's predicted durations.
 

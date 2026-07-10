@@ -1,8 +1,10 @@
 import heapq
 import itertools
+from time import monotonic, monotonic_ns, time
 from uuid import UUID
 from typing import Callable
 from sounddevice import OutputStream
+
 from pfspeak.core.runtime import worker
 from pfspeak.extra.voices import Voices
 from pfspeak.app.directories import build
@@ -10,28 +12,24 @@ from pfspeak.core.types import ServiceTypes
 from pfspeak.core.param import ListenParams
 from pfspeak.common.types import OptionalSpec
 from pfspeak.common.g2p import Graphemes2Phonemes
-from pfspeak.core.runtime.pipeline import WorkerAdapter
+from pfspeak.core.devices import Hook, InputStream
+from pfspeak.common.defaults import DEFAULT_APP_SPEC
 from pfspeak.common.dataclasses import PfEvent, Playback
 from pfspeak.core.repo import RecognizerRepo, SpeechRepo
-from pfspeak.core.devices import Devices, Hook, InputStream
-from pfspeak.common.defaults import DEFAULT_APP_SPEC, AppSpec
 from pfspeak.core.asset import RecognizerAsset, follow_policy
 from pfspeak.core.session import PfSession
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
 PlaybackBuffer = list[Playback]
-
 PfApp = Callable[[PfSession, PfEvent], None]
+
 
 class PfSpeak:
     voices = Voices
-    devices = Devices
-    AppSpec = AppSpec
 
     def __init__(self, app: OptionalSpec = None) -> None:
         self.__app = app or DEFAULT_APP_SPEC
-        self.session: PfSession | None = None
         self.__hook: Hook | None = None
         self.__convo: LastEvents = {}
         self.__active: Playback | None = None
@@ -41,6 +39,9 @@ class PfSpeak:
         self.__print_lines: list[str] = []
         self.__cancel_playback = False
 
+        self.session: PfSession | None = None
+        self.devices: dict[UUID, InputStream] = {}
+
     def run(self, app: PfApp, *devices: InputStream):
         with self.streaming(*devices) as session:
             for event in session:
@@ -49,16 +50,13 @@ class PfSpeak:
     def streaming(self, *devices: InputStream) -> PfSession:
         build(self.__app)
 
-        tts_enabled = False
-        stt_enabled = False
+        tts_enabled, stt_enabled = False, False
         for device in devices:
-
             if device.service is ServiceTypes.STT and not tts_enabled:
                 tts_enabled = True
                 follow_policy(self.__app, SpeechRepo(), ServiceTypes.TTS)
                 if stt_enabled:
                     break
-
             if device.service is ServiceTypes.TTS and not tts_enabled:
                 tts_enabled = True
                 follow_policy(self.__app, RecognizerRepo(), ServiceTypes.STT) 
@@ -66,12 +64,12 @@ class PfSpeak:
                     break
 
         g2p = Graphemes2Phonemes()
-        worker_adapter = WorkerAdapter(worker.start)
         recognizer_asset = RecognizerAsset(DEFAULT_APP_SPEC, RecognizerRepo())
         recognizer = recognizer_asset.load(ListenParams())
+        self.session = PfSession(g2p, worker.start, recognizer)
 
-        self.session = PfSession(g2p, worker_adapter, recognizer)
         for device in devices:
+            self.devices[device.device_id] = device
             self.session.add_device(device)
 
         if tts_enabled:
@@ -93,19 +91,27 @@ class PfSpeak:
         print("\033[2J\033[H", end="")
         if isinstance(value, str):
             self.__print_lines.append(value)
-        elif value.service != PfEvent.EventTypes.TICKET:
+        elif value.recording:
                 assert value.service and value.device_id
                 self.__convo[(value.service, value.device_id)] = value
 
         for identity, event in self.__convo.items():
-            assert event.recording
+            assert event.recording, event
             print(f"[{identity[0].upper()}]")
             print("\t" + event.recording.text + "\n")
             if event.service == event.types.STT:
                 print("FINALIZED:", event.finalized)
             if event.status:
                 print("STATUS:", event.status)
+            print(f"AGE: {monotonic_ns() - event.recording.audio.created_ns}ns")
+            print(f"modified: {monotonic_ns() - event.recording.audio.modified}ns")
             print()
+
+        print("\n\n", "-" * 25)
+        for device in self.devices.values():
+            print(device.status.name + ":")
+            for line in device.status.lines:
+                print("\t" + line)
 
         print("\n\n", "-" * 25)
         for line in self.__print_lines:

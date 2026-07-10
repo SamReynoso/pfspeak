@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Iterable, List
 from pfspeak.core.param import G2PParams
 from pfspeak.common.types import VoidableDef
+from pfspeak.vendors import en_misaki, espeak_misaki
 from pfspeak.common.just_checking import TypeMToken
 from pfspeak.common.dataclasses import PfToken, TokenList
 from pfspeak.common.defaults import LANG_CODES, ALIASES
@@ -55,26 +56,26 @@ class Graphemes2Phonemes:
         if default_lang:
             self.default_lang = default_lang
 
-    def get(self, code):
+    def ensure(self, code: str):
+        self.get(code).warmup()
+
+    def get(self, code: str):
         lang = lang_code_or_raise(code)
         if lang not in self._cached_backends:
-            self.cache_backend(code)
+            self._cached_backends[lang] = self.create_back_end(lang)
         return self._cached_backends[lang]
 
-    def cache_backend(self, code):
-        lang = lang_code_or_raise(code)
-        self._cached_backends[lang] = self.create_back_end(lang)
 
     def create_back_end(self, code: str):
         try:
-            from misaki import en, espeak
+            print(f"Creating graphemem to phoneme backend: code({code})")
             if code in ("a", "b"):
                 british = code == "b"
                 try:
-                    fallback = espeak.EspeakFallback(british=british)
+                    fallback = espeak_misaki.EspeakFallback(british=british)
                 except Exception:
                     fallback = None
-                g2p = en.G2P(
+                g2p = en_misaki.G2P(
                         trf=self.trf,
                         british=british,
                         fallback=fallback,
@@ -119,7 +120,7 @@ class Graphemes2Phonemes:
                  ):
         code = lang 
         if not code:
-                code = self.default_lang
+            code = self.default_lang
         assert code is not None, "code was none but should have been some"
         if code in ("a", "b"):
             tokens = self.misaki_to_token_list(self.get(code)(text)[1])

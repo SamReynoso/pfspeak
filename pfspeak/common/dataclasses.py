@@ -5,16 +5,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pfspeak.core.devices import InputStream
 
-import soxr
-import numpy
 from uuid import UUID
 from enum import StrEnum
-from numpy import array, float32
 from difflib import SequenceMatcher
 from time  import time, monotonic_ns
+from typing import Iterable, overload
 from dataclasses import dataclass, field
 from pfspeak.extra.voices import VoiceEnum
-from typing import Iterable, Literal, overload
 from pfspeak.common.just_checking import NDArray, Float32, TypeTensor
 
 
@@ -24,17 +21,15 @@ class PfEvent:
     class EventTypes(StrEnum):
         TEXT = "text"
         TTS = "tts"
-
         AUDIO = "audio"
         STT = "stt"
-
         DUCK = "duck"
         TICKET = "ticket"
 
-    device: InputStream | None
-    device_id: UUID | None
+    device_id: UUID
     service: EventTypes
 
+    device: InputStream | None
     request: WorkRequest | None
     recording: Recording | None
 
@@ -421,12 +416,14 @@ class AudioChunk:
 
     @property
     def rms(self):
+        import numpy
         if self._rms is None:
             self._rms = numpy.sqrt(numpy.mean(self.waveform**2))
         return self._rms
 
     @property
     def peak(self):
+        import numpy
         if self._peak is None:
             self._peak = numpy.max(numpy.abs(self.waveform))
         return self._peak
@@ -439,11 +436,16 @@ class AudioChunk:
     def end_time(self) -> float:
         return self.start_time + self.duration
 
+    @property
+    def modified(self) -> float:
+        return self.created_ns + int(self.duration * 1e+9)
+
     def __repr__(self) -> str:
         return (f"AudioChunk(start_time={self.start_time}, "
                 f"duration={self.duration})")
 
     def resample(self, samplerate: int):
+        import soxr
         waveform = soxr.resample(
                 self.waveform,
                 in_rate=self.samplerate,
@@ -462,6 +464,13 @@ class Audio(list[AudioChunk]):
     def to_waveform(self):
         import numpy
         return numpy.concatenate([c.waveform for c in self])
+
+    @property
+    def created_ns(self):
+        if not self:
+            raise RuntimeError("Empty Audio has no start time")
+        return self[0].created_ns
+
 
     @property
     def start_time(self):
@@ -498,6 +507,10 @@ class Audio(list[AudioChunk]):
 
         return self.end_time - self.start_time
 
+    @property
+    def modified(self):
+        return self[-1].modified
+
     def __add__(self, other: Audio | list) -> Audio:
         _list = super().__add__(other)
         return Audio(_list)
@@ -513,9 +526,14 @@ def float_range(start: float, end: float, count: int):
 
 @dataclass(slots=True)
 class PfStatus:
+    name: str = "Status"
     sent: int = 0
     received: int = 0
     line: str = ""
+    lines: list[str] = field(default_factory=list)
+
+    def add(self, line: str):
+        self.lines.append(line)
 
 
 @dataclass(frozen=True)
@@ -554,6 +572,7 @@ class Prediction:
     @staticmethod
     def recording(prediction):
         # TODO: ...
+        from numpy import array, float32
         waveform = array(prediction.audio).astype(float32)
         chunk = AudioChunk(device_id=prediction.device_id,
                            waveform=waveform,
@@ -562,28 +581,5 @@ class Prediction:
         return Recording(tokens=prediction.tokens, audio=Audio([chunk])) 
 
 
-@dataclass(slots=True)
-class WorkerMessageBase:
-    op: Literal["stop", "speak"]
 
-
-@dataclass(slots=True)
-class Sentinel(WorkerMessageBase):
-    op: Literal["stop", "speak"] = "stop"
-
-
-@dataclass(slots=True)
-class WorkerMessage(WorkerMessageBase):
-    device_id: UUID
-    tokens: TokenList
-    voice: VoiceEnum | str
-    speed: float = 1 
-
-    def __repr__(self) -> str:
-        return (f"WorkerMessage(op={self.op}, "
-                f"tokens={len(self.tokens)}, "
-                f"voice='{str(self.voice)}', "
-                f"speed={self.speed})"
-                )
-
-
+class Sentinel: ...

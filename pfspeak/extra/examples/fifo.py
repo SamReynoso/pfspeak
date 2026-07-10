@@ -1,7 +1,7 @@
 from pfspeak import PfSpeak
-from pfspeak.common.dataclasses import PfEvent
-from pfspeak.core import Fifo
+from pfspeak.core.devices import Fifo
 from pfspeak.extra.voices import Voices
+from pfspeak.common.dataclasses import PfEvent
 
 
 DESCRIPTION = "FIFO named pipe text-to-speech example"

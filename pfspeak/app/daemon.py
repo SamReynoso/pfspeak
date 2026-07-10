@@ -1,6 +1,6 @@
 from pfspeak import PfSpeak
 from pfspeak.app import pfconfig
-from pfspeak.core import Fifo
+from pfspeak.core.devices import Fifo
 
 
 def main():
