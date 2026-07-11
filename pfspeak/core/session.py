@@ -36,7 +36,6 @@ class PfSession:
         self.devices: dict[UUID, InputStream] = {}
         self.__keep_alive = True
         g2p.ensure("a")
-        print("g2p ensured")
 
 
     def add_device(self, device: InputStream) -> None:
@@ -50,36 +49,42 @@ class PfSession:
         else:
             device.callback = self.events_queue.put
 
+    def shutdown(self):
+        self.__keep_alive = False
+
     def reset(self, device: InputStream) -> None:
         self.stt.reset(device.device_id)
         device.active = None
 
     def finalize(self, event: PfEvent):
+        if event.finalized:
+            raise RuntimeError("Event already finalized")
         assert event.device
         event.finalized = True
+        event.device.active = None
         self.reset(event.device)
+        self.events_queue.put(event)
 
-    def shutdown(self):
-        self.__keep_alive = False
-
-    def __polling_cycle(self):
+    def __poll_cycle(self):
         for device in self.devices.values():
             if device.active:
                 yield device.active 
         try:
-            event = self.events_queue.get(timeout=0.015)
-            if event.service in [event.types.TTS, event.types.STT]:
-                event.device = self.devices[event.device_id]
-            yield event
+            yield self.events_queue.get(timeout=0.015)
         except Empty:
             yield PfEvent.as_ticket()
 
     def __iter__(self) -> Generator[PfEvent]:
         while self.__keep_alive:
-            for event in self.__polling_cycle():
+            for event in self.__poll_cycle():
 
                 if not self.exceptions.empty():
                     raise self.exceptions.get_nowait()
+
+                if event.device_id:
+                    event.device = self.devices[event.device_id]
+                    if event.service is event.types.STT and not event.finalized:
+                        event.device.active = event
 
                 yield event
 
@@ -87,7 +92,6 @@ class PfSession:
                     case PfEvent.EventTypes.TEXT:
                         assert event.request
                         self.tts(event.request)
-
 
     def __enter__(self):
         self.tts.start()
@@ -99,7 +103,6 @@ class PfSession:
         print("Session: shutting down")
         self.tts.stop()
         for device in self.devices.values():
-            print("SESSION: stopping device:", device)
             device.stop()
         if args[1] is not None:
             return False

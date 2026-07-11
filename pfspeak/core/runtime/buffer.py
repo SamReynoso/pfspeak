@@ -1,7 +1,7 @@
 from typing import Callable
 from uuid import UUID
 from collections import deque
-#from pfspeak.common.g2p import Graphemes2Phonemes
+from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.common.just_checking import TypeRecognizer
 from pfspeak.common.dataclasses import Audio, AudioChunk, PfEvent, Recording
 

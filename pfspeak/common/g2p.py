@@ -68,7 +68,7 @@ class Graphemes2Phonemes:
 
     def create_back_end(self, code: str):
         try:
-            print(f"Creating graphemem to phoneme backend: code({code})")
+            print(f"G2P: creating backend: code({code})")
             if code in ("a", "b"):
                 british = code == "b"
                 try:

@@ -25,7 +25,7 @@ if __name__ == "__main__":
         install(pfconfig)
 
     elif args.command == "examples":
-        EXAMPLES[args.example].main()
+        exit(EXAMPLES[args.example].main())
 
     elif args.command == "import-check":
         ...

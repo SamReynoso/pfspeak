@@ -12,6 +12,15 @@ def has_recording(fn: Callable):
         return fn(event, *args, **kwargs)
     return wrapper
 
+def has_text(fn: Callable):
+    def wrapper(event: PfEvent, *args, **kwargs):
+        if event.service == event.types.TICKET:
+            raise RuntimeError("Utility disallows event type 'ticket'")
+        if event.recording is None and event.request is None:
+            raise ValueError("Utility requires text property")
+        return fn(event, *args, **kwargs)
+    return wrapper
+
 
 @has_recording
 def older_than(event: PfEvent, seconds: float) -> bool:
@@ -29,7 +38,7 @@ def unchanged_for(event: PfEvent, seconds: float) -> bool:
     return time() - event.recording.audio[-1].end_time >= seconds
 
 
-@has_recording
+@has_text
 def words(event: PfEvent) -> list[str]:
     return [w.lower() for w in alphanumeric(event).split(" ")]
 
@@ -44,7 +53,7 @@ def word_count(event: PfEvent) -> int:
     return len(event.recording.text.split(" "))
 
 
-@has_recording
+@has_text
 def more_words_than(event: PfEvent, words: int) -> bool:
     """
     Returns True when the word count of an events text is greater then the
@@ -54,7 +63,7 @@ def more_words_than(event: PfEvent, words: int) -> bool:
     return len(event.recording.text.split(" ")) > words
 
 
-@has_recording
+@has_text
 def last_words(event: PfEvent, number: int) -> str:
     return " ".join(
             [w.lower() for w in alphanumeric(event).split(" ")[- number:]]
@@ -64,14 +73,14 @@ def last_words(event: PfEvent, number: int) -> str:
 PUNCTUATION = frozenset(".!?")
 
 
-@has_recording
+@has_text
 def punctuations(event: PfEvent) -> int:
     """ Returns the the number of punctuations in a recordings text """
     assert event.recording
-    return sum(ch in PUNCTUATION for ch in event.recording.text)
+    return sum(ch in PUNCTUATION for ch in event.text)
 
 
-@has_recording
+@has_text
 def last_punctuation(event: PfEvent) -> int:
     """ 
     Return the index for the last punctuation in a recordings text or -1 if no
@@ -85,20 +94,19 @@ def last_punctuation(event: PfEvent) -> int:
     return last
 
 
-@has_recording
+@has_text
 def trim_end(event: PfEvent, number: int) -> str:
     assert event.recording
-    return " ".join(event.recording.text.split(" ")[: - number])
+    return " ".join(event.text.split(" ")[: - number])
 
 
-@has_recording
+@has_text
 def alphanumeric(event: PfEvent) -> str:
-    assert event.recording
-    text = event.recording.text.lower()
+    text = event.text.lower()
     return "".join(ch for ch in text if ch.isalnum() or ch.isspace())
 
 
-@has_recording
+@has_text
 def ends_with_phrase(event: PfEvent, phrase: str) -> bool:
     event_words = alphanumeric(event).split(" ")
     phrase_words = [w.lower() for w in phrase.split(" ")]
@@ -109,6 +117,6 @@ def ends_with_phrase(event: PfEvent, phrase: str) -> bool:
     return False
 
 
-@has_recording
+@has_text
 def anywhere(event: PfEvent, phrase: str):
     return all(w in alphanumeric(event).split(" ") for w in phrase.split(" "))

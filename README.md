@@ -2,10 +2,9 @@
 
 PfSpeak is a local-first, event-driven speech framework for Python.
 
-Instead of exposing separate APIs for speech recognition, text-to-speech,
-language models, microphones, sockets, and custom transports, PfSpeak
-models everything as a stream of events. Devices produce events,
-applications react to them, and other devices consume them.
+PfSpeak provides a unified event model for speech recognition,
+text-to-speech, language models, microphones, sockets, and custom
+devices.
 
 The result is a simple programming model built around ordinary Python
 functions instead of callback chains or hidden background orchestration.
@@ -42,6 +41,12 @@ pip install git+https://github.com/samreynoso/pfspeak.git
 
 PyPI support is planned for a future release.
 
+### Models and Assets
+
+The first time speech recognition or text-to-speech is used,
+PfSpeak automatically downloads any required model assets into a shared
+user cache.
+
 ---
 
 ## Quick Start
@@ -62,29 +67,29 @@ pf = PfSpeak()
 microphone = Microphone()
 ollama = Ollama("qwen3:0.6b", voice="af_heart")
 
-def app(session, event):
 
+@pf.partial(microphone)
+def recognize(session, event):
+    if events.unchanged_for(event, 8):
+        session.finalize(event)
+
+
+@pf.final(microphone)
+def prompt(_, event):
+    ollama.adapter(prompt=event.text)
+
+
+@pf.tts(ollama)
+def speak(_, event):
+    pf.play(event)
+
+
+@pf.every
+def console(_, event):
     pf.print(event)
 
-    if event.device is microphone:
 
-        if events.ends_with_phrase(event, "exit now"):
-            session.shutdown()
-            return
-
-        event.status = f"Duration ignoring gaps: {event.duration:.2f}s"
-
-        if events.unchanged_for(event, 8):
-
-            pf.print("Sending request to Ollama...")
-
-            session.finalize(event)
-            ollama.adapter(event=event)
-
-    elif event.device is ollama:
-        pf.play(event)
-
-pf.run(app, microphone, ollama)
+pf.run()
 ```
 
 ---
@@ -94,25 +99,31 @@ pf.run(app, microphone, ollama)
 Everything in PfSpeak communicates through events.
 
 ```
-Microphone
+ Microphone
+     │
+     ▼
+ AUDIO Event
      │
      ▼
  Speech Recognition
      │
      ▼
-   STT Event
+ STT Event
      │
      ▼
  Application
      │
      ▼
- Language Model
+ TEXT Event
      │
      ▼
-   TTS Event
+ Text-to-Speech
      │
      ▼
-  pf.play()
+ TTS Event
+     │
+     ▼
+ pf.play()  
 ```
 
 The framework does not decide how your application behaves.
@@ -198,7 +209,8 @@ completely.
 
 ## Audio Playback
 
-`pf.play()` is a managed playback engine for synthesized speech.
+`pf.play()` is a managed playback engine for synthesized speech that
+integrates with the event loop.
 
 Features include:
 
@@ -254,6 +266,16 @@ PfSpeak-based applications.
 
 This keeps applications lightweight while avoiding duplicate downloads
 and configuration.
+
+---
+
+## Embedding
+
+PfSpeak can also run inside existing applications.
+
+```python
+app = FastAPI(lifespan=pf.lifespan)
+```
 
 ---
 

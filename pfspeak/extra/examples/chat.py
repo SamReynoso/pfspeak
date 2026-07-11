@@ -87,6 +87,7 @@ from pfspeak.common.defaults import DEFAULT_LLM
 from pfspeak.core.runtime import buffer, marshal 
 from pfspeak.common.requests import OllamaRequest
 from pfspeak.core.devices import Microphone, Ollama
+from pfspeak.extra.voices import Voices
 
 
 class Mem:
@@ -136,7 +137,7 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
 
     ollama = Ollama(model, voice=voice)
     microphone = Microphone(samplerate=samplerate)
-    fifo = devices.Fifo("./input.pipe", voice="bm_lewis", exists_ok=True)
+    fifo = devices.Fifo("./input.pipe", voice=Voices.EN.BF_ISABELLA, exists_ok=True)
     pf = PfSpeak()
     with pf.streaming(microphone, ollama, fifo) as session:
         for e in session:
@@ -151,7 +152,7 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
                 if events.anywhere(e, "pizza moonlight"):
                     pf.play(kill=True)
 
-            if e.service == e.types.STT:
+            if e.service == e.types.STT and not e.finalized:
 
                 if events.ends_with_phrase(e, "chat exit"):
                     return 0
@@ -178,7 +179,7 @@ def main(model: str = DEFAULT_LLM, voice: str = "af_heart", samplerate=None) -> 
                         pf.print("Chat: timeout(inactivity)")
                     session.reset(microphone)
 
-            elif e.device is ollama:
+            elif e.device is ollama and e.service is e.types.TTS:
                 memory.append_chat(e)
                 pf.play(e)
 

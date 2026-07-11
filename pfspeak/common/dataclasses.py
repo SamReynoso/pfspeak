@@ -21,13 +21,12 @@ class PfEvent:
     class EventTypes(StrEnum):
         TEXT = "text"
         TTS = "tts"
-        AUDIO = "audio"
         STT = "stt"
         DUCK = "duck"
         TICKET = "ticket"
 
-    device_id: UUID
     service: EventTypes
+    device_id: UUID | None
 
     device: InputStream | None
     request: WorkRequest | None
@@ -73,9 +72,12 @@ class PfEvent:
 
     @property
     def text(self):
-        if not self.recording:
-            raise ValueError("Event recording is None")
-        return self.recording.text
+        if not self.recording and not self.request:
+            raise ValueError("Event missing text content")
+        if self.recording:
+            return self.recording.text
+        assert self.request
+        return self.request.tokens.text
 
     @classmethod
     def as_ticket(cls):

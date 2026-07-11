@@ -1,28 +1,30 @@
 import heapq
 import itertools
-from time import monotonic, monotonic_ns, time
 from uuid import UUID
 from typing import Callable
+from time import monotonic_ns
+from threading import Thread, Event
 from sounddevice import OutputStream
-
 from pfspeak.core.runtime import worker
 from pfspeak.extra.voices import Voices
 from pfspeak.app.directories import build
+from pfspeak.core.session import PfSession
+from contextlib import asynccontextmanager
 from pfspeak.core.types import ServiceTypes
 from pfspeak.core.param import ListenParams
 from pfspeak.common.types import OptionalSpec
+from pfspeak.core.dispatch import AppDispatch
 from pfspeak.common.g2p import Graphemes2Phonemes
 from pfspeak.core.devices import Hook, InputStream
 from pfspeak.common.defaults import DEFAULT_APP_SPEC
 from pfspeak.common.dataclasses import PfEvent, Playback
 from pfspeak.core.repo import RecognizerRepo, SpeechRepo
 from pfspeak.core.asset import RecognizerAsset, follow_policy
-from pfspeak.core.session import PfSession
 
 
 LastEvents = dict[tuple[PfEvent.EventTypes, UUID], PfEvent]
 PlaybackBuffer = list[Playback]
-PfApp = Callable[[PfSession, PfEvent], None]
+PfApp = Callable[[PfSession, PfEvent], None] | AppDispatch
 
 
 class PfSpeak:
@@ -38,14 +40,60 @@ class PfSpeak:
         self.__stream: OutputStream | None = None
         self.__print_lines: list[str] = []
         self.__cancel_playback = False
+        self.__dispatch = AppDispatch()
+        self.__ready = Event()
 
         self.session: PfSession | None = None
         self.devices: dict[UUID, InputStream] = {}
 
-    def run(self, app: PfApp, *devices: InputStream):
+    def run(self, app: PfApp | None = None, *devices: InputStream):
+        app = app or self.__dispatch
+        if isinstance(app, AppDispatch):
+            devices = tuple(app.devices.values())
+        if not devices:
+            raise ValueError("Can't start session without at least one device")
         with self.streaming(*devices) as session:
             for event in session:
                 app(session, event)
+
+    def every(self, fn):
+        return self.__dispatch.every(fn)
+
+    def text(self, device: InputStream):
+        return self.__dispatch.text(device)
+
+    def tts(self, device: InputStream):
+        return self.__dispatch.tts(device)
+
+    def partial(self, device: InputStream):
+        return self.__dispatch.partial(device)
+
+    def final(self, device: InputStream):
+        return self.__dispatch.final(device)
+
+    def duck(self, device: InputStream):
+        return self.__dispatch.duck(device)
+
+    def hook(self, fn: Callable):
+        if self.__hook is None:
+            self.__hook = Hook()
+        decorator = self.__dispatch.tts(self.__hook)
+        return decorator(fn)
+
+    def start(self, *args):
+        self.__thread = Thread(target=self.run, args=args, daemon=True)
+        self.__thread.start()
+        self.__ready.wait()
+
+    def stop(self):
+        if self.__stream:
+            self.__stream.stop()
+        if self.session:
+            self.session.shutdown()
+        if self.__thread:
+            self.__thread.join()
+        self.session = None
+        self.__thread = None
 
     def streaming(self, *devices: InputStream) -> PfSession:
         build(self.__app)
@@ -73,10 +121,12 @@ class PfSpeak:
             self.session.add_device(device)
 
         if tts_enabled:
-            device = Hook()
-            self.session.add_device(device)
-            self.__hook = device
+            if self.__hook is None:
+                self.__hook = Hook()
+            if self.__hook.device_id not in self.session.devices:
+                self.session.add_device(self.__hook)
 
+        self.__ready.set()  # go
         return self.session
 
     def say(self, text: str, voice: str, speed: int = 1) -> None:
@@ -94,29 +144,35 @@ class PfSpeak:
         elif value.recording:
                 assert value.service and value.device_id
                 self.__convo[(value.service, value.device_id)] = value
+        screen = ""
 
         for identity, event in self.__convo.items():
             assert event.recording, event
-            print(f"[{identity[0].upper()}]")
-            print("\t" + event.recording.text + "\n")
+            screen += f"[{identity[0].upper()}]\n\t{event.recording.text}\n"
             if event.service == event.types.STT:
-                print("FINALIZED:", event.finalized)
+                screen += f"FINALIZED: {event.finalized}\n"
             if event.status:
-                print("STATUS:", event.status)
-            print(f"AGE: {monotonic_ns() - event.recording.audio.created_ns}ns")
-            print(f"modified: {monotonic_ns() - event.recording.audio.modified}ns")
-            print()
+                screen += f"STATUS:, {event.status}\n"
+            screen += (
+                    "AGE: "
+                    f"{monotonic_ns() - event.recording.audio.created_ns}ns"
+                    "\n"
+                    "MODIFIED: "
+                    f"{monotonic_ns() - event.recording.audio.modified}ns"
+                    "\n"
+                    )
 
-        print("\n\n", "-" * 25)
+        screen += "\n\n" + "-" * 25 + "\n"
         for device in self.devices.values():
-            print(device.status.name + ":")
+            screen += device.status.name + ":\n"
             for line in device.status.lines:
-                print("\t" + line)
+                screen += "\t" + line + "\n"
 
-        print("\n\n", "-" * 25)
+        screen += "\n\n" + "-" * 25 + "\n"
         for line in self.__print_lines:
-            print(line)
-        assert self.session
+            screen += line + "\n"
+        print(screen)
+
 
     def play(self,
              event: PfEvent | None = None,
@@ -192,3 +248,11 @@ class PfSpeak:
                 callback=self.__callback)
 
         self.__stream.start()
+
+    @asynccontextmanager
+    async def lifespan(self, _):
+        self.start()
+        try:
+            yield
+        finally:
+            self.stop()

@@ -291,7 +291,6 @@ class Fifo(TTSStream):
             with open(self.path, "r") as self.fifo:
                 while self.streaming:
                     for line in self.fifo:
-                        self.status.add(line)
                         yield line
                     yield EOF
             self.status.add("Fifo: shutdown complete")
@@ -443,6 +442,7 @@ class Microphone(STTStream):
                 channels=self.channels,
                 callback=wrapper,
                 dtype="float32")
+        self.status.add(f"device ({self.device})")
 
         return self.stream
 
