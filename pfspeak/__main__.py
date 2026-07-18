@@ -20,10 +20,6 @@ if __name__ == "__main__":
         from pfspeak.cli.messages import config_output
         print(config_output)
 
-    elif args.command == "install":
-        from pfspeak.app.install import install
-        install(pfconfig)
-
     elif args.command == "examples":
         exit(EXAMPLES[args.example].main())
 

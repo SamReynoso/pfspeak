@@ -1,5 +1,14 @@
-.venv
-__pycache__
-pfspeak.egg-info/
+.venv/
+__pycache__/
+
+*.egg-info/
 build/
 dist/
+
+.pytest_cache/
+.mypy_cache/
+
+.coverage
+htmlcov/
+
+.DS_Store

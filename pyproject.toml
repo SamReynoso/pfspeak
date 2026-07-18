@@ -1,14 +1,10 @@
-# 
-#
-
-
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pfspeak"
-version = "0.0.1"
+version = "0.1.0"
 requires-python = ">=3.11.0"
 
 dependencies = [
@@ -25,6 +21,36 @@ dependencies = [
     "torch",
     "soxr",
 ]
+description = "Local-first, event-driven speech framework for Python"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Sam Reynoso", email = "sam@codeoutpost.com"}
+    ]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+keywords = [
+    "speech",
+    "tts",
+    "stt",
+    "voice",
+    "audio",
+    "llm",
+]
+
+[project.urls]
+Homepage = "https://github.com/samreynoso/pfspeak"
+Repository = "https://github.com/samreynoso/pfspeak"
+Issues = "https://github.com/samreynoso/pfspeak/issues"
+
 
 [project.scripts]
 pfspeak = "pfspeak.__main__:main"
@@ -34,9 +60,6 @@ package-dir = {"" = "."}
 
 [tool.setuptools.packages.find]
 where = ["."]
-
-[tool.setuptools.package-data]
-pfspeak = ["resources/*.sh", "resources/pflogger"]
 
 [tool.ruff]
 target-version = "py311"

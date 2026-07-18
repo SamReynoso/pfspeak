@@ -1,6 +1,7 @@
 # PfSpeak
 
-PfSpeak is a local-first, event-driven speech framework for Python.
+PfSpeak is a local-first, event-driven speech framework for building
+voice applications in Python.
 
 PfSpeak provides a unified event model for speech recognition,
 text-to-speech, language models, microphones, sockets, and custom
@@ -15,19 +16,28 @@ rather than orchestration.
 
 ---
 
+## Why PfSpeak 
+
+PfSpeak provides a unified event model for speech recognition,
+text-to-speech, language models, microphones, sockets, and custom
+devices. Applications remain in control of the event loop while devices
+stay simple and composable.
+
+---
+
 ## Features
 
+- Event-driven programming model
 - Local-first speech recognition
 - Local-first text-to-speech
-- Event-driven programming model
 - Streaming speech recognition
 - Streaming language model support
+- Immutable event model
 - Multiple simultaneous devices
 - FIFO, TCP, and Hook devices
 - Automatic playback queue
-- Playback priorities and interruption handling
-- Automatic microphone ducking during playback
-- Immutable event model
+- Playback priorities
+- Automatic microphone ducking
 
 ---
 
@@ -36,10 +46,9 @@ rather than orchestration.
 ### GitHub
 
 ```bash
-pip install git+https://github.com/samreynoso/pfspeak.git
+pip install pfspeak
 ```
 
-PyPI support is planned for a future release.
 
 ### Models and Assets
 
@@ -56,6 +65,9 @@ Most applications follow the same pattern:
 1. Create one or more devices.
 2. Write an application callback.
 3. Start the event loop.
+
+The following application listens to a microphone, sends finalized speech
+to an LLM, synthesizes the response, and prints every event.
 
 ```python
 from pfspeak import PfSpeak
@@ -236,6 +248,21 @@ application itself.
 
 ---
 
+## Design Philosophy
+
+PfSpeak is built around a few simple ideas.
+
+- Devices should remain simple.
+- Applications should own the control flow.
+- Everything communicates through the same event model.
+- Voice applications should look like ordinary Python programs.
+
+Rather than hiding work behind callback chains or framework magic,
+PfSpeak exposes a deterministic event loop that applications can
+observe, modify, and extend.
+
+---
+
 ## Examples
 
 The repository contains complete working examples, including:
@@ -279,21 +306,6 @@ app = FastAPI(lifespan=pf.lifespan)
 
 ---
 
-## Design Philosophy
-
-PfSpeak is built around a few simple ideas.
-
-- Devices should remain simple.
-- Applications should own the control flow.
-- Everything communicates through the same event model.
-- Voice applications should look like ordinary Python programs.
-
-Rather than hiding work behind callback chains or framework magic,
-PfSpeak exposes a deterministic event loop that applications can
-observe, modify, and extend.
-
----
-
 ## License
 
-MIT
+Licensed under the Apache License, Version 2.0. See the LICENSE file for details.
